@@ -1,0 +1,53 @@
+version: "3.8"
+
+services:
+  spyre-document-summarizer:
+    image: localhost/spyre-document-summarizer:v2
+    container_name: spyre-document-summarizer
+    build:
+      context: .
+      dockerfile: Dockerfile
+    extra_hosts:
+      - "spyre-vf-test-test-vf.apps.ocpz-standard.b39-ocpai2.pok.stglabs.ibm.com:9.47.95.169"
+    volumes:
+      - ./backend:/home/dev/Spyre_Document_Summarizer/backend
+    working_dir: /home/dev/Spyre_Document_Summarizer
+    environment:
+      - REACT_APP_API_BASE_URL=${REACT_APP_API_BASE_URL}
+    command: >
+      bash -c "
+        echo 'Activating virtual environment...' &&
+        source /home/dev/devenv/bin/activate || echo 'Failed to activate venv' &&
+        echo 'Installing Python packages...' &&
+        pip install sklearn2pmml sentence_transformers || echo 'Pip install failed' &&
+        python3 backend/main.py"
+    stdin_open: true
+    tty: true
+    ports:
+      - "3000:3000"
+      - "8000:8000"
+    networks:
+      - app-network
+    depends_on:
+      - opensearch
+
+  opensearch:
+    image: phoenixsystemsag/opensearch:2.9.0
+    container_name: opensearch
+    environment:
+      - discovery.type=single-node
+      - DISABLE_SECURITY_PLUGIN=true
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    networks:
+      - app-network
+
+volumes:
+  opensearch-data:
+
+networks:
+  app-network:
+    driver: bridge
