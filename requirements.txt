@@ -35,3 +35,4 @@ certifi
 pydantic
 PyPDF2
 opensearch-py
+python-docx
