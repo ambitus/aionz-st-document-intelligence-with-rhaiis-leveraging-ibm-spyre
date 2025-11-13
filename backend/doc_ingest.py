@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from PyPDF2 import PdfReader
 from docx import Document
@@ -9,11 +9,16 @@ from langchain.vectorstores.elasticsearch import ElasticsearchStore
 from langchain.embeddings import HuggingFaceEmbeddings
 from elasticsearch import Elasticsearch
 from typing import List
+from pymongo import MongoClient
+from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
+import torch
+
 from config import (
     ES_HOST,
     EMBEDDING_MODEL,
     CHUNK_SIZE,
     CHUNK_OVERLAP,
+    MONGO_DB_HOST
 )
 
 app = FastAPI()
@@ -25,8 +30,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-docs=[]
-user_id=''
 
 def extract_text_from_pdf(pdf: str) -> str:
     """
@@ -97,58 +100,14 @@ def ingest_code_to_es(docs, model_name=EMBEDDING_MODEL, index_name="shreyaganesh
     embedder = HuggingFaceEmbeddings(model_name=model_name)
     es_client = get_es_connection()
 
-    # Ensure the index exists before searching
-    print(es_client.indices.exists(index=index_name))
-    if not es_client.indices.exists(index=index_name):
-        print(f"Index '{index_name}' does not exist. Creating it...")
-       
-        ElasticsearchStore(
-            es_connection=es_client,
-            index_name=index_name,
-            embedding=embedder,
-        )   
-    else:
-        print(f"Index '{index_name}' already exists.")
-
-    print(f"Fetching existing document names from `{index_name}`...")
-    existing_docs = set()
-
-    try:
-        query = {
-            "_source": ["metadata.doc_name"],
-            "query": {"match_all": {}}
-        }
-
-        resp = es_client.search(index=index_name, body=query, size=10000)
-        for hit in resp["hits"]["hits"]:
-            metadata = hit["_source"].get("metadata", {})
-            doc_name = metadata.get("doc_name")
-            if doc_name:
-                existing_docs.add(doc_name)
-
-        print(f"Found {len(existing_docs)} existing documents in `{index_name}`")
-
-    except Exception as e:
-        print(f"Warning: Could not fetch existing documents: {e}")
-        existing_docs = set()
-
-    # Filter for new docs
-    new_docs = [d for d in docs if d["filename"] not in existing_docs]
-    if not new_docs:
-        print("No new documents to ingest. Skipping embedding.")
-        return
-
-    print(f"Found {len(new_docs)} new documents to embed and ingest")
-
-    vectorstore = ElasticsearchStore(
+    vectorstore=ElasticsearchStore(
         es_connection=es_client,
         index_name=index_name,
         embedding=embedder,
-    )
-
+    )  
     all_chunks, all_metadata = [], []
 
-    for item in tqdm(new_docs, desc="Embedding new code"):
+    for item in tqdm(docs, desc="Embedding new code"):
         doc_name = item["filename"]
         doc_content = item["text"]
         print(type(doc_content))
@@ -166,21 +125,97 @@ def ingest_code_to_es(docs, model_name=EMBEDDING_MODEL, index_name="shreyaganesh
     vectorstore.add_texts(texts=all_chunks, metadatas=all_metadata)
     print(f"Ingested {len(all_chunks)} new code chunks into `{index_name}`")
 
-# @app.post("/summarize")
-# async def upload_file(
-#     file: UploadFile = File(...),
-#     repo_name: str = Form(...),
-#     branch_name: str = Form(...),
-#     github_token: str = Form(...),
-#     wca_api_key: str = Form(...),
-#     watsonx_api_key: str = Form(...),
-#     space_id: str = Form(...),
-# ):
+def mongo_db_connection():
+    client = MongoClient(MONGO_DB_HOST)
+    #create a database/get the existing db
+    db = client["document_store"]
+    return db
 
+def get_or_create_user_collection(mongo_db,user_id: str):
+    """Return a user-specific MongoDB collection, creating it if needed."""
+    collection_name = f"user_{user_id}"
+    if collection_name not in mongo_db.list_collection_names():
+        print(f"Creating new collection for user '{user_id}'")
+    else:
+        print(f"User '{user_id}' already exists")
+    return mongo_db[collection_name]
+
+def ingest_document_in_mongodb(docs,user_id):
+    mongo_db = mongo_db_connection()
+
+    # Creating user specific collections
+    collection_name = f"user_{user_id}"
+    collection = get_or_create_user_collection(mongo_db, collection_name)
+
+    doc_summarised=[]
+    for item in tqdm(docs, desc=f"Processing user {user_id}"):
+        doc_name = item["filename"]
+        doc_content = item["text"]
+        existing = collection.find_one({"doc_name":doc_name})
+        if existing:
+            print(f"Skipping duplicate document '{doc_name}' for user '{user_id}'")
+            continue
+
+        # create the document entry
+        document = {
+            "doc_name": doc_name,
+            "doc_content": doc_content,
+            "uploaded_at": datetime.now().isoformat(),
+        }
+        document.pop("_id", None)
+        # insert document into a particular user collection
+        collection.insert_one(document)
+        print(f"Document '{doc_name}' stored in collection '{collection_name}'")
+        ingest_code_to_es(docs, EMBEDDING_MODEL,collection_name)
+        doc_summary = summarize(doc_content)
+        # collection.update_one(
+        #     {"_id": collection.insert_one(document).inserted_id},
+        #     {"$set": {"doc_summary": doc_summary}}
+        # )
+        print(f"Added summary for document '{doc_name}'")
+        doc_summarised.append({"filename": doc_name, "doc_content": doc_content, "doc_summary":doc_summary})
+    return doc_summarised
+
+def load_model():
+    model_path="ibm-granite/granite-3.3-2b-instruct"
+    device="cpu"
+    model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            device_map=device,
+            torch_dtype=torch.bfloat16,
+        )
+    tokenizer = AutoTokenizer.from_pretrained(
+            model_path
+    )
+    return model, tokenizer
+
+def summarize(doc_content):
+    model, tokenizer = load_model()
+    try:
+        prompt = f""" 
+        Summarize the following document
+        
+        Document:
+        {doc_content}
+        """
+        conv = [{"role": "user", "content":prompt}]
+        device="cpu"
+        input_ids = tokenizer.apply_chat_template(conv, return_tensors="pt", thinking=True, return_dict=True, add_generation_prompt=True).to(device)
+
+        set_seed(42)   
+        output = model.generate(
+            **input_ids,
+            max_new_tokens=512,
+        )
+
+        prediction = tokenizer.decode(output[0, input_ids["input_ids"].shape[1]:], skip_special_tokens=True)
+        return prediction
+    except:
+        return "Error in document summarization"
 
 @app.post("/upload-files")
-async def upload_files(files: List[UploadFile] = File(...), ):
-
+async def upload_files(files: List[UploadFile] = File(...), user_id:str = Form(...)):
+    docs=[]
     for file in files:
         if file.filename.endswith(".pdf"):
             file_content = extract_text_from_pdf(file.file)
@@ -193,5 +228,6 @@ async def upload_files(files: List[UploadFile] = File(...), ):
             return {"File not in one of the supported formats (pdf, docx, txt). Please upload a valid file"}
         #import pdb;pdb.set_trace()
         docs.append({"filename": file.filename, "text": str(file_content)})
-    ingest_code_to_es(docs)
-    return docs
+    doc_summarized=ingest_document_in_mongodb(docs,user_id)
+    return doc_summarized
+
