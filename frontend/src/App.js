@@ -1,13 +1,11 @@
-import React from 'react';
-import OverviewSection from "./components/OverviewSection";
-// import OverviewSection from "./components/OverviewSection_black";
-
+import Dashboard from "./components/Dashboard";
+import '@carbon/styles/css/styles.css';
 import { Theme } from '@carbon/react';
 import './App.css';
 function App() {
   return (
-    <Theme theme="g100"> {/* Optional: Use dark theme */}
-      <OverviewSection />
+    <Theme theme="g100"> 
+      <Dashboard />
     </Theme>
   );
 }
