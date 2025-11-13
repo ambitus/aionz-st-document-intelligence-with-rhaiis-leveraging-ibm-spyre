@@ -359,7 +359,7 @@ const App = () => {
               {aiConnected ? 'AI Online' : 'AI Offline'}
             </span>
           </div>
-          <span style={{ 
+          {/* <span style={{ 
             padding: '4px 12px', 
             background: 'linear-gradient(135deg, #0f62fe 0%, #0353e9 100%)',
             color: 'white',
@@ -369,7 +369,7 @@ const App = () => {
             boxShadow: '0 2px 8px rgba(15, 98, 254, 0.3)'
           }}>
             llama3.2
-          </span>
+          </span> */}
           <button 
             onClick={testConnection}
            style={{
