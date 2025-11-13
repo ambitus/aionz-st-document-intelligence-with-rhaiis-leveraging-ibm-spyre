@@ -51,3 +51,22 @@ podman run -d \
   -e "ELASTICSEARCH_HOSTS=http://host.containers.internal:9200" \
   docker.elastic.co/kibana/kibana:8.13.0
 ```
+
+## MongoDB setup on mac
+
+Install with Homebrew
+
+```bash
+brew tap mongodb/brew
+brew install mongodb-community@7.0
+```
+
+Start MongoDB
+```bash
+brew services start mongodb-community@7.0
+```
+
+Verify the installation (you should see mongodb in the list)
+```bash
+brew services list
+```
