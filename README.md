@@ -11,7 +11,15 @@ This repository contains code for summarizing documents using Spyre with granite
 - node
 - npm
 
+## Installation as a Native application
 
+### 1. UI Setup 
+## clone the repository and run below command where you clone the repo.
+```bash
+ cd spyre_enhanced_document_summarizer/frontend
+ npm install
+ npm start
+```
 ## Installation as a container
 
 ### 1. On s390x Architecture
