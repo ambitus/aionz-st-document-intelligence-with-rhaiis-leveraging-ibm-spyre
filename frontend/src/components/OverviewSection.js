@@ -200,7 +200,7 @@ const App = () => {
           
           <h1 style={{ 
             fontSize: '28px', 
-            fontWeight: '300', 
+            fontWeight: '500', 
             margin: '0 0 8px 0', 
             color: '#161616' 
           }}>
@@ -286,7 +286,7 @@ const App = () => {
             fontSize: '14px',
             color: '#525252'
           }}>
-            <p style={{ margin: '0 0 8px 0', fontWeight: '500' }}>Demo Accounts:</p>
+            <p style={{ margin: '0 0 8px 0', fontWeight: '500' }}>Accounts:</p>
             <p style={{ margin: '4px 0' }}>• Admin: Use "admin" as username</p>
             <p style={{ margin: '4px 0' }}>• User: Any other username</p>
           </div>
