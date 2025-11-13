@@ -8,8 +8,6 @@ function App() {
   return (
     <Theme theme="g100"> {/* Optional: Use dark theme */}
       <OverviewSection />
-      {/* <OverviewSection_black /> */}
-
     </Theme>
   );
 }
