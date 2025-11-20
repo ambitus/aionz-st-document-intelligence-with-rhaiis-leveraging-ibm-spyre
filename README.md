@@ -11,15 +11,7 @@ This repository contains code for summarizing documents using Spyre with granite
 - node
 - npm
 
-## Installation as a Native application
 
-### 1. UI Setup 
-## clone the repository and run below command where you clone the repo.
-```bash
- cd spyre_enhanced_document_summarizer/frontend
- npm install
- npm start
-```
 ## Installation as a container
 
 ### 1. On s390x Architecture
@@ -41,6 +33,17 @@ podman machine set --cpus 4 --memory 8192 --disk-size 100 podman-machine-default
 podman machine start podman-machine-default
 ```
 
+## Installation as a Native application
+
+### 1. UI Setup 
+
+#### clone the repository and run below command where you clone the repo.
+```bash
+ cd spyre_enhanced_document_summarizer/frontend
+ npm install
+ npm start
+```
+
 ## Debug
 
 Run the Kibana container to debug any issues related to ElasticSearch DB indeces
@@ -50,23 +53,4 @@ podman run -d \
   -p 5601:5601 \
   -e "ELASTICSEARCH_HOSTS=http://host.containers.internal:9200" \
   docker.elastic.co/kibana/kibana:8.13.0
-```
-
-## MongoDB setup on mac
-
-Install with Homebrew
-
-```bash
-brew tap mongodb/brew
-brew install mongodb-community@7.0
-```
-
-Start MongoDB
-```bash
-brew services start mongodb-community@7.0
-```
-
-Verify the installation (you should see mongodb in the list)
-```bash
-brew services list
 ```
