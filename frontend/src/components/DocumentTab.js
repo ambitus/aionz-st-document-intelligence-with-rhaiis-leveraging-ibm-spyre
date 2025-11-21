@@ -1,8 +1,12 @@
 import React, { useState, useRef } from 'react';
 import {
+  Calendar,
+  DataBase,
   Document,
   Time,
   TrashCan,
+  Download,
+  Close,
 } from '@carbon/icons-react';
 import {
   Button,
@@ -35,7 +39,6 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
       return;
     }
 
-    // Create object URL for the file
     const url = URL.createObjectURL(doc.file);
     setPreviewUrl(url);
     setSelectedDocForPreview(doc);
@@ -123,26 +126,27 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
           }}>
             Word documents (.docx, .doc) cannot be previewed directly in the browser.
           </p>
-
-          href={url}
-          download={doc.name}
-          style={{
-            background: '#0f62fe',
-            color: 'white',
-            border: 'none',
-            padding: '0.75rem 1.5rem',
-            borderRadius: '6px',
-            cursor: 'pointer',
-            fontSize: '0.875rem',
-            fontWeight: 500,
-            textDecoration: 'none',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '0.5rem'
-          }}
-
-          <Icons.Download />
-          Download to View
+          <a
+            href={url}
+            download={doc.name}
+            style={{
+              background: '#0f62fe',
+              color: 'white',
+              border: 'none',
+              padding: '0.75rem 1.5rem',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '0.875rem',
+              fontWeight: 500,
+              textDecoration: 'none',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.5rem'
+            }}
+          >
+            <Icons.Download />
+            Download to View
+          </a>
         </div>
       );
     } else {
@@ -172,32 +176,31 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
           }}>
             This file type ({doc.file.type || 'unknown'}) cannot be previewed in the browser.
           </p>
-
-          href={url}
-          download={doc.name}
-          style={{
-            background: '#0f62fe',
-            color: 'white',
-            border: 'none',
-            padding: '0.75rem 1.5rem',
-            borderRadius: '6px',
-            cursor: 'pointer',
-            fontSize: '0.875rem',
-            fontWeight: 500,
-            textDecoration: 'none',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '0.5rem'
-          }}
-
-          Download File
-
+          <a
+            href={url}
+            download={doc.name}
+            style={{
+              background: '#0f62fe',
+              color: 'white',
+              border: 'none',
+              padding: '0.75rem 1.5rem',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '0.875rem',
+              fontWeight: 500,
+              textDecoration: 'none',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.5rem'
+            }}
+          >
+            Download File
+          </a>
         </div>
       );
     }
   };
 
-  // Text file preview component
   const TextFilePreview = ({ url }) => {
     const [content, setContent] = useState('Loading...');
     const [error, setError] = useState(null);
@@ -276,21 +279,124 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
   };
 
   const downloadSummary = (doc, format) => {
-    const content = doc.summary || 'No summary available';
-    const blob = new Blob([content], { type: format === 'pdf' ? 'application/pdf' : 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${doc.name}_summary.${format}`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
+    if (format === 'txt') {
+      const content = `Document: ${doc.name}\n\nSummary:\n${doc.summary}\n\nExtracted Information:\n${doc.extractedInfo || 'No extracted information available'}`;
+      const blob = new Blob([content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${doc.name.replace(/\.[^/.]+$/, '')}_summary.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } else if (format === 'pdf') {
+      const printWindow = window.open('', '_blank');
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>${doc.name} - Summary</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              margin: 40px;
+              line-height: 1.6;
+              color: #333;
+            }
+            h1 {
+              color: #0f62fe;
+              border-bottom: 3px solid #0f62fe;
+              padding-bottom: 10px;
+              margin-bottom: 20px;
+            }
+            h2 {
+              color: #161616;
+              margin-top: 30px;
+              margin-bottom: 15px;
+            }
+            .metadata {
+              background: #f4f4f4;
+              padding: 20px;
+              border-radius: 8px;
+              margin: 20px 0;
+            }
+            .metadata-item {
+              margin: 10px 0;
+            }
+            .metadata-label {
+              font-weight: bold;
+              color: #525252;
+            }
+            .summary-box {
+              background: #edf5ff;
+              border-left: 4px solid #0f62fe;
+              padding: 20px;
+              margin: 20px 0;
+            }
+            .extracted-info {
+              background: #fafafa;
+              border: 1px solid #e0e0e0;
+              padding: 20px;
+              border-radius: 8px;
+              white-space: pre-line;
+            }
+            @media print {
+              body { margin: 20px; }
+            }
+          </style>
+        </head>
+        <body>
+          <h1>${doc.name}</h1>
+          
+          <div class="metadata">
+            <h2>Document Metadata</h2>
+            <div class="metadata-item">
+              <span class="metadata-label">Status:</span> Processed
+            </div>
+            <div class="metadata-item">
+              <span class="metadata-label">Uploaded:</span> ${formatDateTime(doc.uploadedAt)}
+            </div>
+            <div class="metadata-item">
+              <span class="metadata-label">File Size:</span> ${formatFileSize(doc.size)}
+            </div>
+          </div>
 
+          <h2>AI-Generated Summary</h2>
+          <div class="summary-box">
+            ${doc.summary}
+          </div>
+
+          <h2>Extracted Information</h2>
+          <div class="extracted-info">
+            ${doc.extractedInfo || 'No extracted information available'}
+          </div>
+        </body>
+        </html>
+      `;
+      
+      printWindow.document.write(htmlContent);
+      printWindow.document.close();
+      
+      setTimeout(() => {
+        printWindow.print();
+      }, 250);
+    }
+  };
 
   return (
     <>
+      <style>{`
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes slideUp {
+          from { transform: translateY(20px); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
+        }
+      `}</style>
+      
       <div style={{ display: 'flex', gap: '1.5rem', padding: '2rem', margin: '0 auto' }}>
         {/* Left Column - Upload and Documents */}
         <div style={{ flex: 1 }}>
@@ -485,7 +591,6 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
                               {doc.name}
                             </h3>
                             {doc.status === 'ready' && (
-
                               <Tag style={{
                                 background: '#d1f0d4',
                                 color: '#24a148', borderRadius: '12px',
@@ -496,7 +601,6 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
                               </Tag>
                             )}
                             {doc.status === 'processing' && (
-
                               <Tag style={{
                                 color: '#0f62fe',
                                 padding: '0.25rem 0.75rem',
@@ -639,8 +743,6 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
           flexDirection: 'column',
           gap: '1rem'
         }}>
-
-          {/* Quick Stats */}
           <Tile style={{
             background: 'white',
             border: '1px solid #e0e0e0',
@@ -701,7 +803,6 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
             </Stack>
           </Tile>
 
-          {/* AI Analysis Info */}
           <Tile style={{
             background: '#edf5ff',
             border: '1px solid #d0e2ff',
@@ -740,6 +841,8 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
           </Tile>
         </div>
       </div>
+
+      {/* Preview Modal */}
       {selectedDocForPreview && (
         <div style={{
           position: 'fixed',
@@ -765,7 +868,6 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
             display: 'flex',
             flexDirection: 'column'
           }} onClick={(e) => e.stopPropagation()}>
-            {/* Preview Header */}
             <div style={{
               padding: '1.5rem',
               borderBottom: '1px solid #e0e0e0',
@@ -826,7 +928,6 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
               </button>
             </div>
 
-            {/* Preview Content */}
             <div style={{
               flex: 1,
               overflow: 'auto',
@@ -835,7 +936,6 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
               {previewUrl && getPreviewContent(selectedDocForPreview, previewUrl)}
             </div>
 
-            {/* Preview Footer */}
             <div style={{
               padding: '1rem 1.5rem',
               borderTop: '1px solid #e0e0e0',
@@ -863,7 +963,8 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
           </div>
         </div>
       )}
-      {/* View Details Modal */}
+
+      {/* View Details Modal - Enhanced */}
       {selectedDocForDetails && (
         <div style={{
           position: 'fixed',
@@ -871,82 +972,79 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
           left: 0,
           right: 0,
           bottom: 0,
-          background: 'rgba(0, 0, 0, 0.5)',
+          background: 'rgba(0, 0, 0, 0.6)',
+          backdropFilter: 'blur(4px)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           zIndex: 1000,
-          padding: '2rem'
+          padding: '2rem',
+          animation: 'fadeIn 0.2s ease-in-out'
         }} onClick={() => setSelectedDocForDetails(null)}>
           <div style={{
             background: 'white',
-            borderRadius: '12px',
+            borderRadius: '16px',
             width: '100%',
             maxWidth: '900px',
             maxHeight: '90vh',
-            overflow: 'auto',
-            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3)'
+            display: 'flex',
+            flexDirection: 'column',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.4)',
+            animation: 'slideUp 0.3s ease-out'
           }} onClick={(e) => e.stopPropagation()}>
-            {/* Modal Header */}
+            
+            {/* Modal Header - Fixed */}
             <div style={{
-              padding: '1.5rem',
-              borderBottom: '1px solid #e0e0e0',
+              padding: '2rem',
+              borderBottom: '1px solid #e5e7eb',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              position: 'sticky',
-              top: 0,
-              background: 'white',
-              zIndex: 1
+              background: 'linear-gradient(to bottom, #ffffff, #f9fafb)',
+              borderTopLeftRadius: '16px',
+              borderTopRightRadius: '16px'
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                 <div style={{
-                  width: '40px',
-                  height: '40px',
-                  background: '#edf5ff',
-                  borderRadius: '8px',
+                  width: '48px',
+                  height: '48px',
+                  background: 'linear-gradient(135deg, #0f62fe 0%, #0353e9 100%)',
+                  borderRadius: '12px',
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'center'
+                  justifyContent: 'center',
+                  boxShadow: '0 4px 6px rgba(15, 98, 254, 0.2)'
                 }}>
-                  <Document size={20} style={{ color: '#0f62fe' }} />
+                  <Document size={24} style={{ color: 'white' }} />
                 </div>
                 <div>
                   <h2 style={{
-                    color: '#161616',
-                    fontSize: '1.125rem',
-                    fontWeight: 500,
-                    margin: 0
+                    color: '#111827',
+                    fontSize: '1.25rem',
+                    fontWeight: 600,
+                    margin: 0,
+                    lineHeight: 1.3
                   }}>
                     {selectedDocForDetails.name}
                   </h2>
                   <p style={{
-                    color: '#525252',
+                    color: '#6b7280',
                     fontSize: '0.875rem',
-                    margin: 0
+                    margin: '0.25rem 0 0 0'
                   }}>
-                    Document Analysis
+                    Document Analysis & Summary
                   </p>
                 </div>
               </div>
-              <button
-                onClick={() => setSelectedDocForDetails(null)}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  cursor: 'pointer',
-                  padding: '0.5rem',
-                  borderRadius: '6px',
-                  color: '#525252',
-                  fontSize: '1.5rem'
-                }}
-              >
-                ✕
-              </button>
             </div>
 
-            {/* Modal Content */}
-            <div style={{ padding: '1.5rem' }}>
+            {/* Modal Content - Scrollable */}
+            <div style={{
+              padding: '2rem',
+              overflowY: 'auto',
+              flex: 1
+            }}>
+              
               {/* Metadata Section */}
               <div style={{ marginBottom: '2rem' }}>
                 <div style={{
@@ -955,11 +1053,11 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
                   gap: '0.5rem',
                   marginBottom: '1rem'
                 }}>
-                  <Icons.FileText size={16} style={{ color: '#525252' }} />
+                  <Calendar size={18} style={{ color: '#0f62fe' }} />
                   <h3 style={{
-                    color: '#161616',
-                    fontSize: '1rem',
-                    fontWeight: 500,
+                    color: '#111827',
+                    fontSize: '1.125rem',
+                    fontWeight: 600,
                     margin: 0
                   }}>
                     Metadata
@@ -968,42 +1066,54 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
 
                 <div style={{
                   display: 'grid',
-                  gridTemplateColumns: '1fr 1fr',
-                  gap: '1.5rem'
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                  gap: '1.25rem',
+                  padding: '1.5rem',
+                  background: 'linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)',
+                  borderRadius: '12px',
+                  border: '1px solid #e5e7eb'
                 }}>
                   <div>
                     <p style={{
-                      color: '#525252',
-                      fontSize: '0.875rem',
-                      margin: '0 0 0.25rem 0'
+                      color: '#6b7280',
+                      fontSize: '0.8125rem',
+                      margin: '0 0 0.5rem 0',
+                      fontWeight: 500,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px'
                     }}>
                       Status
                     </p>
                     <span style={{
-                      background: '#161616',
+                      background: '#10b981',
                       color: 'white',
-                      padding: '0.25rem 0.75rem',
-                      borderRadius: '12px',
-                      fontSize: '0.75rem',
+                      padding: '0.375rem 0.875rem',
+                      borderRadius: '20px',
+                      fontSize: '0.8125rem',
                       fontWeight: 600,
-                      display: 'inline-block'
+                      display: 'inline-block',
+                      boxShadow: '0 2px 4px rgba(16, 185, 129, 0.3)'
                     }}>
-                      processed
+                      ✓ Processed
                     </span>
                   </div>
 
                   <div>
                     <p style={{
-                      color: '#525252',
-                      fontSize: '0.875rem',
-                      margin: '0 0 0.25rem 0'
+                      color: '#6b7280',
+                      fontSize: '0.8125rem',
+                      margin: '0 0 0.5rem 0',
+                      fontWeight: 500,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px'
                     }}>
                       Uploaded
                     </p>
                     <p style={{
-                      color: '#161616',
-                      fontSize: '0.875rem',
-                      margin: 0
+                      color: '#111827',
+                      fontSize: '0.9375rem',
+                      margin: 0,
+                      fontWeight: 500
                     }}>
                       {formatDateTime(selectedDocForDetails.uploadedAt)}
                     </p>
@@ -1011,33 +1121,20 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
 
                   <div>
                     <p style={{
-                      color: '#525252',
-                      fontSize: '0.875rem',
-                      margin: '0 0 0.25rem 0'
-                    }}>
-                      Processed
-                    </p>
-                    <p style={{
-                      color: '#161616',
-                      fontSize: '0.875rem',
-                      margin: 0
-                    }}>
-                      {formatDateTime(selectedDocForDetails.uploadedAt)}
-                    </p>
-                  </div>
-
-                  <div>
-                    <p style={{
-                      color: '#525252',
-                      fontSize: '0.875rem',
-                      margin: '0 0 0.25rem 0'
+                      color: '#6b7280',
+                      fontSize: '0.8125rem',
+                      margin: '0 0 0.5rem 0',
+                      fontWeight: 500,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px'
                     }}>
                       File Size
                     </p>
                     <p style={{
-                      color: '#161616',
-                      fontSize: '0.875rem',
-                      margin: 0
+                      color: '#111827',
+                      fontSize: '0.9375rem',
+                      margin: 0,
+                      fontWeight: 500
                     }}>
                       {formatFileSize(selectedDocForDetails.size)}
                     </p>
@@ -1048,24 +1145,44 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
               {/* AI Summary Section */}
               <div style={{ marginBottom: '2rem' }}>
                 <h3 style={{
-                  color: '#161616',
-                  fontSize: '1rem',
-                  fontWeight: 500,
-                  margin: '0 0 1rem 0'
+                  color: '#111827',
+                  fontSize: '1.125rem',
+                  fontWeight: 600,
+                  margin: '0 0 1rem 0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem'
                 }}>
-                  AI-Generated Summary
+                  <span style={{
+                    background: 'linear-gradient(135deg, #0f62fe 0%, #0353e9 100%)',
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                    backgroundClip: 'text'
+                  }}>
+                    AI-Generated Summary
+                  </span>
                 </h3>
 
                 <div style={{
                   padding: '1.5rem',
-                  background: '#edf5ff',
-                  border: '1px solid #d0e2ff',
-                  borderRadius: '8px'
+                  background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+                  border: '2px solid #bfdbfe',
+                  borderRadius: '12px',
+                  position: 'relative',
+                  overflow: 'hidden'
                 }}>
+                  <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '4px',
+                    height: '100%',
+                    background: 'linear-gradient(to bottom, #0f62fe, #0353e9)'
+                  }} />
                   <p style={{
-                    color: '#161616',
-                    fontSize: '0.875rem',
-                    lineHeight: '1.625',
+                    color: '#1e3a8a',
+                    fontSize: '0.9375rem',
+                    lineHeight: '1.7',
                     margin: 0
                   }}>
                     {selectedDocForDetails.summary}
@@ -1075,45 +1192,69 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
                 {/* Download Summary Buttons */}
                 <div style={{
                   display: 'flex',
-                  gap: '0.5rem',
-                  marginTop: '1rem'
+                  gap: '0.75rem',
+                  marginTop: '1rem',
+                  flexWrap: 'wrap'
                 }}>
                   <button
                     onClick={() => downloadSummary(selectedDocForDetails, 'txt')}
                     style={{
-                      background: 'transparent',
-                      border: '1px solid #e0e0e0',
-                      padding: '0.5rem 1rem',
-                      borderRadius: '6px',
+                      background: 'white',
+                      border: '2px solid #e5e7eb',
+                      padding: '0.625rem 1.25rem',
+                      borderRadius: '8px',
                       cursor: 'pointer',
                       fontSize: '0.875rem',
-                      color: '#161616',
-                      fontWeight: 500,
+                      color: '#374151',
+                      fontWeight: 600,
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '0.5rem'
+                      gap: '0.5rem',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseOver={(e) => {
+                      e.currentTarget.style.borderColor = '#0f62fe';
+                      e.currentTarget.style.color = '#0f62fe';
+                      e.currentTarget.style.transform = 'translateY(-2px)';
+                      e.currentTarget.style.boxShadow = '0 4px 6px rgba(0, 0, 0, 0.1)';
+                    }}
+                    onMouseOut={(e) => {
+                      e.currentTarget.style.borderColor = '#e5e7eb';
+                      e.currentTarget.style.color = '#374151';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                      e.currentTarget.style.boxShadow = 'none';
                     }}
                   >
-                    <Icons.FileText />
+                    <Download size={16} />
                     Download as TXT
                   </button>
                   <button
                     onClick={() => downloadSummary(selectedDocForDetails, 'pdf')}
                     style={{
-                      background: 'transparent',
-                      border: '1px solid #e0e0e0',
-                      padding: '0.5rem 1rem',
-                      borderRadius: '6px',
+                      background: 'linear-gradient(135deg, #0f62fe 0%, #0353e9 100%)',
+                      border: 'none',
+                      padding: '0.625rem 1.25rem',
+                      borderRadius: '8px',
                       cursor: 'pointer',
                       fontSize: '0.875rem',
-                      color: '#161616',
-                      fontWeight: 500,
+                      color: 'white',
+                      fontWeight: 600,
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '0.5rem'
+                      gap: '0.5rem',
+                      transition: 'all 0.2s',
+                      boxShadow: '0 4px 6px rgba(15, 98, 254, 0.3)'
+                    }}
+                    onMouseOver={(e) => {
+                      e.currentTarget.style.transform = 'translateY(-2px)';
+                      e.currentTarget.style.boxShadow = '0 6px 12px rgba(15, 98, 254, 0.4)';
+                    }}
+                    onMouseOut={(e) => {
+                      e.currentTarget.style.transform = 'translateY(0)';
+                      e.currentTarget.style.boxShadow = '0 4px 6px rgba(15, 98, 254, 0.3)';
                     }}
                   >
-                    <Icons.FileText />
+                    <Download size={16} />
                     Download as PDF
                   </button>
                 </div>
@@ -1127,11 +1268,11 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
                   gap: '0.5rem',
                   marginBottom: '1rem'
                 }}>
-                  <Icons.FileText size={16} style={{ color: '#525252' }} />
+                  <DataBase size={18} style={{ color: '#0f62fe' }} />
                   <h3 style={{
-                    color: '#161616',
-                    fontSize: '1rem',
-                    fontWeight: 500,
+                    color: '#111827',
+                    fontSize: '1.125rem',
+                    fontWeight: 600,
                     margin: 0
                   }}>
                     Extracted Information
@@ -1140,82 +1281,89 @@ const DocumentsTab = ({ documents, onUpload, onDelete }) => {
 
                 <div style={{
                   display: 'flex',
-                  gap: '0.5rem',
+                  gap: '0.625rem',
                   marginBottom: '1rem',
                   flexWrap: 'wrap'
                 }}>
-                  <span style={{
-                    background: '#edf5ff',
-                    color: '#0f62fe',
-                    padding: '0.5rem 1rem',
-                    borderRadius: '6px',
-                    fontSize: '0.875rem',
-                    fontWeight: 500
-                  }}>
-                    Type: legal
-                  </span>
-                  <span style={{
-                    background: '#f4f4f4',
-                    color: '#525252',
-                    padding: '0.5rem 1rem',
-                    borderRadius: '6px',
-                    fontSize: '0.875rem'
-                  }}>
-                    1.4K chars
-                  </span>
+                  {selectedDocForDetails.extractedInfo && (
+                    <>
+                      <span style={{
+                        background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+                        color: '#1e40af',
+                        padding: '0.5rem 1rem',
+                        borderRadius: '8px',
+                        fontSize: '0.8125rem',
+                        fontWeight: 600,
+                        border: '1px solid #bfdbfe'
+                      }}>
+                        📄 Document Type: {selectedDocForDetails.docType || 'Legal'}
+                      </span>
+                      <span style={{
+                        background: '#f3f4f6',
+                        color: '#6b7280',
+                        padding: '0.5rem 1rem',
+                        borderRadius: '8px',
+                        fontSize: '0.8125rem',
+                        fontWeight: 500
+                      }}>
+                        {selectedDocForDetails.extractedInfo?.length || 0} chars
+                      </span>
+                    </>
+                  )}
                 </div>
 
                 <div style={{
                   padding: '1.5rem',
-                  background: '#fafafa',
-                  border: '1px solid #e0e0e0',
-                  borderRadius: '8px'
+                  background: 'white',
+                  border: '2px solid #e5e7eb',
+                  borderRadius: '12px',
+                  maxHeight: '400px',
+                  overflowY: 'auto'
                 }}>
                   <p style={{
-                    color: '#161616',
-                    fontSize: '0.875rem',
-                    lineHeight: '1.625',
+                    color: '#374151',
+                    fontSize: '0.9375rem',
+                    lineHeight: '1.8',
                     margin: 0,
                     whiteSpace: 'pre-line'
                   }}>
-                    Here is the extracted information structured clearly and accurately:
-
-                    <strong>**Document Type:**</strong> License Information (International Program License Agreement)
-
-                    <strong>**Parties Involved:**</strong>
-
-                    * Client (Licensee)
-                    * IBM (Licensee's Service Provider/Licensor)
-
-                    <strong>**Key Dates and Deadlines:**</strong>
-                    No specific dates mentioned in the document. However, it appears that if Client does not have previously agreed to license terms in effect, the International Program License Agreement (i125-3301-15) applies.
+                    {selectedDocForDetails.extractedInfo || 'No extracted information available for this document.'}
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* Modal Footer */}
+            {/* Modal Footer - Fixed */}
             <div style={{
-              padding: '1.5rem',
-              borderTop: '1px solid #e0e0e0',
+              padding: '1.5rem 2rem',
+              borderTop: '1px solid #e5e7eb',
               display: 'flex',
               justifyContent: 'flex-end',
-              position: 'sticky',
-              bottom: 0,
-              background: 'white',
-              zIndex: 1
+              background: 'linear-gradient(to top, #ffffff, #f9fafb)',
+              borderBottomLeftRadius: '16px',
+              borderBottomRightRadius: '16px'
             }}>
               <button
                 onClick={() => setSelectedDocForDetails(null)}
                 style={{
-                  background: '#0f62fe',
+                  background: 'linear-gradient(135deg, #0f62fe 0%, #0353e9 100%)',
                   color: 'white',
                   border: 'none',
-                  padding: '0.75rem 1.5rem',
-                  borderRadius: '6px',
+                  padding: '0.75rem 2rem',
+                  borderRadius: '8px',
                   cursor: 'pointer',
-                  fontSize: '0.875rem',
-                  fontWeight: 500
+                  fontSize: '0.9375rem',
+                  fontWeight: 600,
+                  transition: 'all 0.2s',
+                  boxShadow: '0 4px 6px rgba(15, 98, 254, 0.3)'
+                }}
+                onMouseOver={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = '0 6px 12px rgba(15, 98, 254, 0.4)';
+                }}
+                onMouseOut={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = '0 4px 6px rgba(15, 98, 254, 0.3)';
                 }}
               >
                 Close

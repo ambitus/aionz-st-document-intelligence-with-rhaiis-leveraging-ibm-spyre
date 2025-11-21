@@ -50,7 +50,7 @@ const SetupGuide = () => {
           borderRadius: '50%',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center'
+          justifyContent: 'center',
         }}>
 
           <Icons.CheckCircle style={{ color: 'white', width: '24px', height: '24px' }} />
@@ -116,9 +116,7 @@ const SetupGuide = () => {
 
   return (
     <div style={{
-      padding: '2rem',
-      margin: '0 auto'
-    }}>
+      padding: '2rem'}}>
       {/* Header */}
       <div style={{
         background: 'linear-gradient(to right, #0f62fe, #0353e9)',
@@ -127,7 +125,8 @@ const SetupGuide = () => {
         marginBottom: '2rem',
         color: 'white',
         position: 'relative',
-        overflow: 'hidden'
+        overflow: 'hidden',
+
       }}>
         <div style={{
           position: 'absolute',
