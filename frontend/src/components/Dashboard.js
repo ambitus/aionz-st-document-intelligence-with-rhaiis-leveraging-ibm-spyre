@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   Watson,
   Login,
+  Asset,
 } from '@carbon/icons-react';
 import AIChat from './AIChatTab';
 import DocumentsTab from './DocumentTab';
@@ -9,6 +10,7 @@ import SetupGuide from './SetupGuide'
 import CustomHeader from './Header'
 import HomePage from './HomeTab'
 import Icons from './Icons'
+import Logo from '../assets/Redhat.png'
 
 const Dashboard = () => {
   const [selectedTab, setSelectedTab] = useState(0);
@@ -107,7 +109,9 @@ const Dashboard = () => {
             margin: '0 auto 32px',
             boxShadow: '0 8px 24px rgba(0, 98, 255, 0.4)'
           }}>
-            <Watson size={40} style={{ color: 'white' }} />
+            {/* <img src={Logo} alt="Logo" style={{ height: '50px',width:'50px'}} /> */}
+            {/* <Watson size={40} style={{ color: 'white' }} /> */}
+                      <Icons.RedHat/>
           </div>
 
           <h1 style={{
@@ -308,7 +312,6 @@ const Dashboard = () => {
           <HomePage documents={documents} onNavigate={setSelectedTab} />
         )}
         {selectedTab === 1 && (
-          // <DocumentsTab documents={documents} onUpload={handleFileUpload} />
           <DocumentsTab
             documents={documents}
             onUpload={handleFileUpload}

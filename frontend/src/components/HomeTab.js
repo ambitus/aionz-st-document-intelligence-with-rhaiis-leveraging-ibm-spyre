@@ -3,6 +3,8 @@ import {
     Time,
     Upload,
     ArrowRight,
+    Chip,
+    Cognitive
 } from '@carbon/icons-react';
 import {
     Row,
@@ -100,7 +102,7 @@ const HomePage = ({ documents, onNavigate }) => {
                                 justifyContent: 'center',
                                 boxShadow: '0 4px 12px rgba(15, 98, 254, 0.3)'
                             }}>
-                                <span style={{ color: 'white', width: '24px', height: '24px' }}><Icons.FileText /></span>
+                                <span style={{ color: 'white' }}><Icons.FileText size={24}/></span>
                             </div>
                             <span style={{ width: '20px', height: '20px', color: '#24a148' }}><Icons.TrendingUp /></span>
                         </div>
@@ -176,7 +178,7 @@ const HomePage = ({ documents, onNavigate }) => {
                                 justifyContent: 'center',
                                 boxShadow: '0 4px 12px rgba(138, 63, 252, 0.3)'
                             }}>
-                                <span style={{ width: '24px', height: '24px', color: 'white' }}><Icons.Brain /></span>
+                                <span style={{  color: 'white' }}><Cognitive size={24}/></span>
                             </div>
                             {processingCount > 0 && (
                                 <div style={{
@@ -319,7 +321,7 @@ const HomePage = ({ documents, onNavigate }) => {
                                     fontWeight: 500,
                                     fontSize: '1.125rem'
                                 }}>
-                                    Document Analytics
+                                    LLM Inference with RHAIIS
                                 </h3>
                                 <p style={{
                                     color: '#525252',
@@ -327,7 +329,7 @@ const HomePage = ({ documents, onNavigate }) => {
                                     fontSize: '0.875rem',
                                     margin: 0
                                 }}>
-                                    Visualize trends, entities, and sentiment across your entire document library.
+                    High-performance LLM inference powered by Red Hat AI Inference Server and IBM Spyre for fast, scalable document processing.
                                 </p>
                             </div>
 
@@ -360,7 +362,7 @@ const HomePage = ({ documents, onNavigate }) => {
                                     justifyContent: 'center',
                                     marginBottom: '1rem'
                                 }}>
-                                    <span style={{ color: 'white' }}><Icons.MessageSquare /></span>
+                                    <span style={{ color: 'white' }}><Icons.MessageSquare size={24} /></span>
                                 </div>
                                 <h3 style={{
                                     color: '#161616',
@@ -368,7 +370,7 @@ const HomePage = ({ documents, onNavigate }) => {
                                     fontWeight: 500,
                                     fontSize: '1.125rem'
                                 }}>
-                                    Intelligent Chat
+                                 RAG-based AI Chatbot
                                 </h3>
                                 <p style={{
                                     color: '#525252',
@@ -376,11 +378,11 @@ const HomePage = ({ documents, onNavigate }) => {
                                     fontSize: '0.875rem',
                                     margin: 0
                                 }}>
-                                    Ask questions about your documents and get instant answers with our AI assistant.
+                                   Retrieval-Augmented Generation powered chatbot that answers questions using your documents with IBM Spyre's contextual understanding.
                                 </p>
                             </div>
 
-                            {/* Enterprise Security */}
+                            {/* Powered by IBM Spyre */}
                             <div style={{
                                 background: 'white',
                                 border: '2px solid #df7379c6',
@@ -409,7 +411,7 @@ const HomePage = ({ documents, onNavigate }) => {
                                     justifyContent: 'center',
                                     marginBottom: '1rem'
                                 }}>
-                                    <span style={{ width: '24px', height: '24px', color: 'white' }}><Icons.Shield /></span>
+                                    <span style={{color: 'white' }}><Chip size={24}/></span>
                                 </div>
                                 <h3 style={{
                                     color: '#161616',
@@ -417,7 +419,7 @@ const HomePage = ({ documents, onNavigate }) => {
                                     fontWeight: 500,
                                     fontSize: '1.125rem'
                                 }}>
-                                    Enterprise Security
+                                    Powered by IBM Spyre
                                 </h3>
                                 <p style={{
                                     color: '#525252',
@@ -425,7 +427,7 @@ const HomePage = ({ documents, onNavigate }) => {
                                     fontSize: '0.875rem',
                                     margin: 0
                                 }}>
-                                    Bank-level encryption and compliance with industry standards to keep your data safe.
+                    Enterprise-grade AI infrastructure with IBM Spyre's advanced semantic processing and secure document intelligence platform.
                                 </p>
                             </div>
                         </div>
@@ -588,7 +590,7 @@ const HomePage = ({ documents, onNavigate }) => {
                         textAlign: 'left',
                         transition: 'all 0.2s'
                     }}>
-                        <div style={{ width: '24px', height: '24px', color: '#0f62fe', marginBottom: '0.5rem' }}><Icons.MessageSquare /></div>
+                        <div style={{ width: '24px', height: '24px', color: '#0f62fe', marginBottom: '0.5rem' }}><Icons.MessageSquare size={24}/></div>
                         <span style={{ color: '#161616', display: 'block', marginBottom: '0.25rem', fontWeight: 500 }}>AI Assistant</span>
                         <span style={{ color: '#525252', fontSize: '0.75rem', display: 'block' }}>Chat with your documents</span>
                     </button>
