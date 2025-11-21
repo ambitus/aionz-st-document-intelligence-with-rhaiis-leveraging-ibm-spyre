@@ -7,6 +7,7 @@ import {
   Send,
   Close
 } from '@carbon/icons-react';
+import Icons from './Icons'
 
 const AIChat = ({ documents }) => {
   const [messages, setMessages] = useState([
@@ -162,8 +163,8 @@ const AIChat = ({ documents }) => {
       gridTemplateColumns: '2fr 1fr', 
       gap: '1.5rem', 
       padding: '2rem',
-      height: 'calc(100vh - 120px)',
-      overflow: 'hidden'
+      height: 'calc(100vh - 140px)',
+      overflow: 'hidden',
     }}>
       {/* Left Column - Chat Interface */}
       <div style={{
@@ -185,13 +186,16 @@ const AIChat = ({ documents }) => {
             <div style={{
               width: '40px',
               height: '40px',
-              background: 'linear-gradient(to bottom right, #0f62fe, #0353e9)',
+              background: 'linear-gradient(135deg, #0062ff 0%, #001d6c 100%)',
               borderRadius: '8px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <Watson size={20} style={{ color: 'white' }} />
+              {/* <Watson size={20} style={{ color: 'white' }} /> */}
+                {/* <svg width="30" height="30" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8 10h16M8 13h16M8 16h16M8 19h16M8 22h16" stroke="white" stroke-width="2"></path><path d="M12 10v12M20 10v12" stroke="white" stroke-width="2"></path></svg> */}
+                      <Icons.RedHat/>
+
             </div>
             <div>
               <h3 style={{ 
@@ -291,7 +295,8 @@ const AIChat = ({ documents }) => {
                     justifyContent: 'center'
                   }}>
                     {msg.role === 'assistant' ? (
-                      <Watson size={12} style={{ color: 'white' }} />
+                      // <Watson size={12} style={{ color: 'white' }} />
+                      <Icons.RedHat/>
                     ) : (
                       <User size={12} style={{ color: '#525252' }} />
                     )}
@@ -692,7 +697,7 @@ const AIChat = ({ documents }) => {
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
-            <Watson size={24} style={{ color: '#0f62fe' }} />
+                      <Icons.RedHat/>
             <div>
               <p style={{ 
                 color: '#161616', 
