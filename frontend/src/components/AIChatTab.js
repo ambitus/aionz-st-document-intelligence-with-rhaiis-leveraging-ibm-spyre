@@ -5,11 +5,13 @@ import {
   User,
   Document, 
   Send,
-  Close
-} from '@carbon/icons-react';
+  Close} from '@carbon/icons-react';
+import {
+  InlineLoading
+} from '@carbon/react';
 import Icons from './Icons'
 
-const AIChat = ({ documents }) => {
+const AIChat = ({ documents, currentUser }) => {
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
@@ -19,13 +21,15 @@ const AIChat = ({ documents }) => {
   ]);
   const [input, setInput] = useState('');
   const [selectedDocuments, setSelectedDocuments] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [streamingMessageId, setStreamingMessageId] = useState(null);
   const messagesEndRef = useRef(null);
 
   const suggestedPrompts = [
     'Summarize all documents',
-    'What are the key financial metrics?',
-    'Analyze sentiment across documents',
-    'Extract important dates and deadlines'
+    'What are the key features of Spyre?',
+    'Analyze the hardware requirements',
+    'Explain the installation process'
   ];
 
   // Auto-scroll to bottom of messages
@@ -69,8 +73,80 @@ const AIChat = ({ documents }) => {
     setSelectedDocuments(prev => prev.filter(d => d.id !== docId));
   };
 
-  const handleSend = () => {
-    if (!input.trim()) return;
+  const sendQueryToAPI = async (query, username) => {
+    try {
+      const formData = new FormData();
+      formData.append('query', query);
+      formData.append('user_id', username);
+
+      const response = await fetch('http://129.40.90.163:8002/ask-query', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      console.error('Error sending query to API:', error);
+      throw error;
+    }
+  };
+
+  const sendStreamingQueryToAPI = async (query, username, onChunk) => {
+    try {
+      const formData = new FormData();
+      formData.append('query', query);
+      formData.append('user_id', username);
+
+      const response = await fetch('http://129.40.90.163:8002/ask-query', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      // Check if the response is streamable
+      const reader = response.body?.getReader();
+      if (!reader) {
+        // Fallback to regular response if streaming is not supported
+        const result = await response.json();
+        return result;
+      }
+
+      const decoder = new TextDecoder();
+      let accumulatedText = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        accumulatedText += chunk;
+
+        // Call the callback with the new chunk
+        if (onChunk) {
+          onChunk(accumulatedText);
+        }
+
+        // Small delay to make streaming visible
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+
+      return { answer: accumulatedText };
+    } catch (error) {
+      console.error('Error sending streaming query to API:', error);
+      throw error;
+    }
+  };
+
+  const handleSend = async () => {
+    if (!input.trim() || !currentUser?.username) return;
 
     const userMessage = { 
       role: 'user', 
@@ -78,83 +154,139 @@ const AIChat = ({ documents }) => {
       timestamp: getCurrentTime()
     };
     setMessages([...messages, userMessage]);
+    setInput('');
+    setIsLoading(true);
 
-    // Simulate AI response based on input
-    setTimeout(() => {
-      let aiResponse;
-      const docCount = selectedDocuments.length > 0 ? selectedDocuments.length : documents.length;
+    // Create a placeholder for the streaming response
+    const streamingMessageId = Date.now().toString();
+    setStreamingMessageId(streamingMessageId);
+    
+    const aiResponsePlaceholder = {
+      id: streamingMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: getCurrentTime(),
+      isStreaming: true
+    };
+    setMessages(prev => [...prev, aiResponsePlaceholder]);
+
+    try {
+      // Use streaming API with callback to update UI in real-time
+      await sendStreamingQueryToAPI(input, currentUser.username, (chunk) => {
+        setMessages(prev => prev.map(msg => 
+          msg.id === streamingMessageId 
+            ? { ...msg, content: chunk }
+            : msg
+        ));
+      });
+
+      // Streaming completed successfully
+      setMessages(prev => prev.map(msg => 
+        msg.id === streamingMessageId 
+          ? { ...msg, isStreaming: false }
+          : msg
+      ));
+    } catch (error) {
+      console.error('Streaming failed, trying regular API:', error);
       
-      if (input.toLowerCase().includes('sentiment')) {
-        const docList = selectedDocuments.length > 0 ? selectedDocuments : documents.slice(0, 3);
-        aiResponse = {
+      // Fallback to regular API if streaming fails
+      try {
+        const regularResponse = await sendQueryToAPI(input, currentUser.username);
+        const finalContent = regularResponse.answer || regularResponse.response || 'I received your query but got an unexpected response format.';
+        
+        setMessages(prev => prev.map(msg => 
+          msg.id === streamingMessageId 
+            ? { ...msg, content: finalContent, isStreaming: false }
+            : msg
+        ));
+      } catch (fallbackError) {
+        const errorResponse = {
           role: 'assistant',
-          content: `I've performed sentiment analysis on ${docCount} documents:\n\n${docList.map(doc => `• ${doc.name}: Positive`).join('\n')}\n\nOverall, the document collection shows a positive tone.`,
-          timestamp: getCurrentTime(),
-          documents: docList
-        };
-      } else {
-        aiResponse = {
-          role: 'assistant',
-          content: `I've analyzed your request: "${input}". Based on ${docCount} documents, I can provide insights, summaries, and answer specific questions about your document content.`,
+          content: `I'm sorry, I encountered an error while processing your request: ${fallbackError.message}. Please try again.`,
           timestamp: getCurrentTime()
         };
+        setMessages(prev => [...prev.filter(msg => msg.id !== streamingMessageId), errorResponse]);
       }
-      setMessages(prev => [...prev, aiResponse]);
-    }, 1000);
-
-    setInput('');
+    } finally {
+      setIsLoading(false);
+      setStreamingMessageId(null);
+    }
   };
 
-  const handlePromptClick = (prompt) => {
+  const handlePromptClick = async (prompt) => {
+    if (!currentUser?.username) {
+      const errorMessage = {
+        role: 'assistant',
+        content: "Please make sure you're logged in to use the AI assistant.",
+        timestamp: getCurrentTime()
+      };
+      setMessages(prev => [...prev, errorMessage]);
+      return;
+    }
+
     setInput(prompt);
-    // Auto-send the prompt
     const userMessage = { 
       role: 'user', 
       content: prompt,
       timestamp: getCurrentTime()
     };
     setMessages([...messages, userMessage]);
+    setIsLoading(true);
 
-    // Simulate AI response
-    setTimeout(() => {
-      let aiResponse;
-      const docCount = selectedDocuments.length > 0 ? selectedDocuments.length : documents.length;
-      const docList = selectedDocuments.length > 0 ? selectedDocuments : documents.slice(0, 3);
+    // Create a placeholder for the streaming response
+    const streamingMessageId = Date.now().toString();
+    setStreamingMessageId(streamingMessageId);
+    
+    const aiResponsePlaceholder = {
+      id: streamingMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: getCurrentTime(),
+      isStreaming: true
+    };
+    setMessages(prev => [...prev, aiResponsePlaceholder]);
 
-      if (prompt.toLowerCase().includes('sentiment')) {
-        aiResponse = {
+    try {
+      // Use streaming API with callback to update UI in real-time
+      await sendStreamingQueryToAPI(prompt, currentUser.username, (chunk) => {
+        setMessages(prev => prev.map(msg => 
+          msg.id === streamingMessageId 
+            ? { ...msg, content: chunk }
+            : msg
+        ));
+      });
+
+      // Streaming completed successfully
+      setMessages(prev => prev.map(msg => 
+        msg.id === streamingMessageId 
+          ? { ...msg, isStreaming: false }
+          : msg
+      ));
+    } catch (error) {
+      console.error('Streaming failed, trying regular API:', error);
+      
+      // Fallback to regular API if streaming fails
+      try {
+        const regularResponse = await sendQueryToAPI(prompt, currentUser.username);
+        const finalContent = regularResponse.answer || regularResponse.response || 'I received your query but got an unexpected response format.';
+        
+        setMessages(prev => prev.map(msg => 
+          msg.id === streamingMessageId 
+            ? { ...msg, content: finalContent, isStreaming: false }
+            : msg
+        ));
+      } catch (fallbackError) {
+        const errorResponse = {
           role: 'assistant',
-          content: `I've performed sentiment analysis on ${docCount} documents:\n\n${docList.map(doc => `• ${doc.name}: Positive`).join('\n')}\n\nOverall, the document collection shows a positive tone.`,
-          timestamp: getCurrentTime(),
-          documents: docList
-        };
-      } else if (prompt.toLowerCase().includes('summarize')) {
-        aiResponse = {
-          role: 'assistant',
-          content: `I've summarized the key points from your ${docCount} documents:\n\n• Financial Report shows strong Q4 performance with 15% revenue growth\n• Contract Agreement outlines standard terms and conditions\n• Product Specifications detail new feature implementations\n\nAll documents are properly formatted and ready for review.`,
+          content: `I'm sorry, I encountered an error while processing your request: ${fallbackError.message}. Please try again.`,
           timestamp: getCurrentTime()
         };
-      } else if (prompt.toLowerCase().includes('financial')) {
-        aiResponse = {
-          role: 'assistant',
-          content: `Key financial metrics from your ${docCount} documents:\n\n• Revenue: $4.8M (15% growth)\n• Operating Margin: 22%\n• Customer Acquisition Cost: $1,200\n• Lifetime Value: $8,500\n• Cash Flow: Positive $1.2M`,
-          timestamp: getCurrentTime()
-        };
-      } else if (prompt.toLowerCase().includes('dates')) {
-        aiResponse = {
-          role: 'assistant',
-          content: `Important dates and deadlines found in ${docCount} documents:\n\n• Contract Renewal: December 15, 2024\n• Project Deadline: January 30, 2025\n• Quarterly Review: March 15, 2025\n• Annual Report: February 28, 2025`,
-          timestamp: getCurrentTime()
-        };
-      } else {
-        aiResponse = {
-          role: 'assistant',
-          content: `I've analyzed your request: "${prompt}". Based on ${docCount} documents, I can provide detailed insights and answer specific questions about your document content.`,
-          timestamp: getCurrentTime()
-        };
+        setMessages(prev => [...prev.filter(msg => msg.id !== streamingMessageId), errorResponse]);
       }
-      setMessages(prev => [...prev, aiResponse]);
-    }, 1000);
+    } finally {
+      setIsLoading(false);
+      setStreamingMessageId(null);
+    }
   };
 
   return (
@@ -192,10 +324,7 @@ const AIChat = ({ documents }) => {
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              {/* <Watson size={20} style={{ color: 'white' }} /> */}
-                {/* <svg width="30" height="30" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8 10h16M8 13h16M8 16h16M8 19h16M8 22h16" stroke="white" stroke-width="2"></path><path d="M12 10v12M20 10v12" stroke="white" stroke-width="2"></path></svg> */}
-                      <Icons.RedHat/>
-
+              <Icons.RedHat/>
             </div>
             <div>
               <h3 style={{ 
@@ -211,7 +340,7 @@ const AIChat = ({ documents }) => {
                 margin: 0, 
                 fontSize: '0.875rem' 
               }}>
-                Powered by IBM ReadHat Inference server with Spyre
+                Powered by IBM RedHat Inference server with Spyre
               </p>
             </div>
           </div>
@@ -268,7 +397,7 @@ const AIChat = ({ documents }) => {
           background: '#fafafa'
         }}>
           {messages.map((msg, idx) => (
-            <div key={idx} style={{
+            <div key={msg.id || idx} style={{
               marginBottom: '1.5rem'
             }}>
               {/* Message Header */}
@@ -295,7 +424,6 @@ const AIChat = ({ documents }) => {
                     justifyContent: 'center'
                   }}>
                     {msg.role === 'assistant' ? (
-                      // <Watson size={12} style={{ color: 'white' }} />
                       <Icons.RedHat/>
                     ) : (
                       <User size={12} style={{ color: '#525252' }} />
@@ -308,6 +436,15 @@ const AIChat = ({ documents }) => {
                   }}>
                     {msg.role === 'assistant' ? 'AI Assistant' : 'You'}
                   </span>
+                  {msg.isStreaming && (
+                    <div style={{
+                      width: '8px',
+                      height: '8px',
+                      background: '#0f62fe',
+                      borderRadius: '50%',
+                      animation: 'pulse 1.5s infinite'
+                    }} />
+                  )}
                 </div>
                 <span style={{
                   color: '#525252',
@@ -323,32 +460,9 @@ const AIChat = ({ documents }) => {
                 border: `2px solid ${msg.role === 'assistant' ? '#e0e0e0' : '#d0e2ff'}`,
                 borderRadius: '8px',
                 padding: '1rem',
-                marginLeft: msg.role === 'assistant' ? '0' : '2rem'
+                marginLeft: msg.role === 'assistant' ? '0' : '2rem',
+                position: 'relative'
               }}>
-                {/* Document links for sentiment analysis */}
-                {msg.documents && (
-                  <div style={{ marginBottom: '1rem' }}>
-                    {msg.documents.map((doc, docIdx) => (
-                      <div key={docIdx} style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem',
-                        marginBottom: '0.25rem',
-                        fontSize: '0.875rem'
-                      }}>
-                        <span style={{ color: '#525252' }}>•</span>
-                        <span style={{ color: '#161616' }}>{doc.name}:</span>
-                        <span style={{
-                          color: '#24a148',
-                          fontWeight: 500
-                        }}>
-                          Positive
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
                 {/* Main message content */}
                 <div style={{
                   color: '#161616',
@@ -356,31 +470,32 @@ const AIChat = ({ documents }) => {
                   whiteSpace: 'pre-line'
                 }}>
                   {msg.content}
+                  {msg.isStreaming && (
+                    <span style={{
+                      display: 'inline-block',
+                      width: '8px',
+                      height: '16px',
+                      background: '#0f62fe',
+                      marginLeft: '4px',
+                      animation: 'blink 1s infinite',
+                      verticalAlign: 'middle'
+                    }} />
+                  )}
                 </div>
-
-                {/* Document links */}
-                {msg.documents && (
-                  <div style={{
-                    display: 'flex',
-                    gap: '0.5rem',
-                    marginTop: '1rem',
-                    flexWrap: 'wrap'
-                  }}>
-                    {msg.documents.map((doc, docIdx) => (
-                      <a key={docIdx} href="#" style={{
-                        color: '#0f62fe',
-                        fontSize: '0.875rem',
-                        textDecoration: 'none',
-                        fontWeight: 500
-                      }}>
-                        [{doc.name}]
-                      </a>
-                    ))}
+                
+                {/* Loading indicator for empty streaming messages */}
+                {msg.isStreaming && !msg.content && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <InlineLoading
+                      description="AI is thinking..."
+                      status="active"
+                    />
                   </div>
                 )}
               </div>
             </div>
           ))}
+          
           <div ref={messagesEndRef} />
         </div>
 
@@ -400,8 +515,9 @@ const AIChat = ({ documents }) => {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+                onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleSend()}
                 placeholder="Ask about your documents..."
+                disabled={isLoading || !currentUser?.username}
                 style={{
                   width: '100%',
                   padding: '1rem 1.25rem',
@@ -409,25 +525,39 @@ const AIChat = ({ documents }) => {
                   borderRadius: '8px',
                   fontSize: '0.875rem',
                   outline: 'none',
-                  transition: 'border-color 0.2s'
+                  transition: 'border-color 0.2s',
+                  background: isLoading || !currentUser?.username ? '#f4f4f4' : 'white',
+                  cursor: isLoading || !currentUser?.username ? 'not-allowed' : 'text'
                 }}
                 onFocus={(e) => {
-                  e.target.style.borderColor = '#0f62fe';
+                  if (!isLoading && currentUser?.username) {
+                    e.target.style.borderColor = '#0f62fe';
+                  }
                 }}
                 onBlur={(e) => {
                   e.target.style.borderColor = '#e0e0e0';
                 }}
               />
+              {!currentUser?.username && (
+                <p style={{
+                  color: '#da1e28',
+                  fontSize: '0.75rem',
+                  margin: '0.5rem 0 0 0'
+                }}>
+                  Please log in to use the AI assistant
+                </p>
+              )}
             </div>
             <button
               onClick={handleSend}
+              disabled={isLoading || !input.trim() || !currentUser?.username}
               style={{
-                background: '#0f62fe',
+                background: isLoading || !input.trim() || !currentUser?.username ? '#c6c6c6' : '#0f62fe',
                 color: 'white',
                 border: 'none',
                 padding: '1rem 1.5rem',
                 borderRadius: '8px',
-                cursor: 'pointer',
+                cursor: isLoading || !input.trim() || !currentUser?.username ? 'not-allowed' : 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.5rem',
@@ -436,14 +566,24 @@ const AIChat = ({ documents }) => {
                 transition: 'background-color 0.2s'
               }}
               onMouseEnter={(e) => {
-                e.target.style.background = '#0353e9';
+                if (!isLoading && input.trim() && currentUser?.username) {
+                  e.target.style.background = '#0353e9';
+                }
               }}
               onMouseLeave={(e) => {
-                e.target.style.background = '#0f62fe';
+                if (!isLoading && input.trim() && currentUser?.username) {
+                  e.target.style.background = '#0f62fe';
+                }
               }}
             >
-              <Send size={16} />
-              Send
+              {isLoading ? (
+                <InlineLoading size="sm" />
+              ) : (
+                <>
+                  <Send size={16} />
+                  Send
+                </>
+              )}
             </button>
           </div>
         </div>
@@ -481,25 +621,30 @@ const AIChat = ({ documents }) => {
               <button
                 key={idx}
                 onClick={() => handlePromptClick(prompt)}
+                disabled={isLoading || !currentUser?.username}
                 style={{
                   background: 'transparent',
                   border: '2px solid #e0e0e0',
                   padding: '0.75rem 1rem',
                   borderRadius: '8px',
-                  cursor: 'pointer',
+                  cursor: isLoading || !currentUser?.username ? 'not-allowed' : 'pointer',
                   textAlign: 'left',
                   fontSize: '0.875rem',
-                  color: '#161616',
+                  color: isLoading || !currentUser?.username ? '#c6c6c6' : '#161616',
                   transition: 'all 0.2s',
                   width: '100%'
                 }}
                 onMouseEnter={(e) => {
-                  e.target.style.borderColor = '#0f62fe';
-                  e.target.style.background = '#edf5ff';
+                  if (!isLoading && currentUser?.username) {
+                    e.target.style.borderColor = '#0f62fe';
+                    e.target.style.background = '#edf5ff';
+                  }
                 }}
                 onMouseLeave={(e) => {
-                  e.target.style.borderColor = '#e0e0e0';
-                  e.target.style.background = 'transparent';
+                  if (!isLoading && currentUser?.username) {
+                    e.target.style.borderColor = '#e0e0e0';
+                    e.target.style.background = 'transparent';
+                  }
                 }}
               >
                 {prompt}
@@ -517,7 +662,7 @@ const AIChat = ({ documents }) => {
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
           display: 'flex',
           flexDirection: 'column',
-          height: '500px', // Increased height
+          height: '500px',
           overflow: 'hidden'
         }}>
           <div style={{
@@ -548,7 +693,7 @@ const AIChat = ({ documents }) => {
             justifyContent: 'space-between',
             marginBottom: '1rem'
           }}>
-            <div >
+            <div>
               <p style={{
                 color: '#525252',
                 fontSize: '0.875rem',
@@ -557,13 +702,12 @@ const AIChat = ({ documents }) => {
                 Total Documents
                <span style={{
                 color: '#161616',
-              fontSize: '1rem',
+                fontSize: '1rem',
                 margin: 0,
                 fontWeight: 500
-            }}> {documents.length}</span>
+              }}> {documents.length}</span>
               </p>
             </div>
-     
           </div>
 
           {/* Select All and Clear All Buttons */}
@@ -575,44 +719,56 @@ const AIChat = ({ documents }) => {
           }}>
             <button 
               onClick={handleSelectAll}
+              disabled={isLoading}
               style={{
                 background: '#edf5ff',
                 border: '2px solid #d0e2ff',
                 padding: '0.75rem',
                 borderRadius: '8px',
-                cursor: 'pointer',
+                cursor: isLoading ? 'not-allowed' : 'pointer',
                 fontSize: '0.875rem',
                 color: '#0f62fe',
                 fontWeight: 500,
-                transition: 'all 0.2s'
+                transition: 'all 0.2s',
+                opacity: isLoading ? 0.6 : 1
               }}
               onMouseEnter={(e) => {
-                e.target.style.background = '#d0e2ff';
+                if (!isLoading) {
+                  e.target.style.background = '#d0e2ff';
+                }
               }}
               onMouseLeave={(e) => {
-                e.target.style.background = '#edf5ff';
+                if (!isLoading) {
+                  e.target.style.background = '#edf5ff';
+                }
               }}
             >
               Select All
             </button>
             <button 
               onClick={handleClearAll}
+              disabled={isLoading}
               style={{
                 background: '#f4f4f4',
                 border: '2px solid #e0e0e0',
                 padding: '0.75rem',
                 borderRadius: '8px',
-                cursor: 'pointer',
+                cursor: isLoading ? 'not-allowed' : 'pointer',
                 fontSize: '0.875rem',
                 color: '#161616',
                 fontWeight: 500,
-                transition: 'all 0.2s'
+                transition: 'all 0.2s',
+                opacity: isLoading ? 0.6 : 1
               }}
               onMouseEnter={(e) => {
-                e.target.style.background = '#e0e0e0';
+                if (!isLoading) {
+                  e.target.style.background = '#e0e0e0';
+                }
               }}
               onMouseLeave={(e) => {
-                e.target.style.background = '#f4f4f4';
+                if (!isLoading) {
+                  e.target.style.background = '#f4f4f4';
+                }
               }}
             >
               Clear All
@@ -643,16 +799,18 @@ const AIChat = ({ documents }) => {
                     borderRadius: '6px',
                     background: selectedDocuments.find(d => d.id === doc.id) ? '#edf5ff' : 'transparent',
                     border: selectedDocuments.find(d => d.id === doc.id) ? '1px solid #0f62fe' : '1px solid transparent',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s'
+                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.2s',
+                    opacity: isLoading ? 0.6 : 1
                   }}
-                  onClick={() => handleDocumentSelect(doc)}
+                  onClick={() => !isLoading && handleDocumentSelect(doc)}
                 >
                   <input
                     type="checkbox"
                     checked={!!selectedDocuments.find(d => d.id === doc.id)}
-                    onChange={() => handleDocumentSelect(doc)}
-                    style={{ cursor: 'pointer' }}
+                    onChange={() => !isLoading && handleDocumentSelect(doc)}
+                    style={{ cursor: isLoading ? 'not-allowed' : 'pointer' }}
+                    disabled={isLoading}
                   />
                   <Document size={16} style={{ color: '#0f62fe', flexShrink: 0 }} />
                   <span style={{
@@ -697,7 +855,7 @@ const AIChat = ({ documents }) => {
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
-                      <Icons.RedHat/>
+            <Icons.RedHat/>
             <div>
               <p style={{ 
                 color: '#161616', 
@@ -735,6 +893,24 @@ const AIChat = ({ documents }) => {
               System Operational
             </span>
           </div>
+          {currentUser && (
+            <div style={{
+              marginTop: '0.5rem',
+              padding: '0.5rem',
+              background: '#f0f4ff',
+              borderRadius: '4px',
+              border: '1px solid #d0e2ff'
+            }}>
+              <p style={{
+                color: '#0f62fe',
+                fontSize: '0.75rem',
+                margin: 0,
+                fontWeight: 500
+              }}>
+                Logged in as: {currentUser.username}
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>

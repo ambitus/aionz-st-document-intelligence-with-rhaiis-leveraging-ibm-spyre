@@ -5,10 +5,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: spyre-document-summarizer
+      isolation: chroot
+    image: localhost/spyre-document-summarizer
     container_name: spyre-document-summarizer
+    security_opt:
+      - seccomp=unconfined
+      - label=disable
     volumes:
       - ./backend:/home/dev/Spyre_Document_Summarizer/backend
+      - /run/podman/podman.sock:/run/podman/podman.sock
     working_dir: /home/dev/Spyre_Document_Summarizer
     environment:
       - REACT_APP_API_BASE_URL=${REACT_APP_API_BASE_URL}
@@ -20,9 +25,8 @@ services:
         pip install sklearn2pmml sentence_transformers colorama || echo 'Pip install failed' &&
         echo 'Starting backend server...' &&
         cd backend &&
-        uvicorn server:app --host 0.0.0.0 --port 8002 --reload"
-    security_opt:
-      - label=disable
+        uvicorn server:app --host 0.0.0.0 --port 8002 --reload
+      "
     tty: true
     ports:
       - "3002:3002"
@@ -31,6 +35,7 @@ services:
       - app-network
     depends_on:
       - mongodb
+      - opensearch
 
   mongodb:
     image: docker.io/s390x/mongo:4
