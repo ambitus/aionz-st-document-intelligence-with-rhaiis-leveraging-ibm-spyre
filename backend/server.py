@@ -8,7 +8,9 @@ from opensearch_utils import get_retriever_os
 from rag import build_rag_prompt
 from rhaiis_utils import call_rhaiis_model
 from utils import extract_text_from_pdf, extract_text_from_doc, green_log
-
+import subprocess
+import requests
+from fastapi.responses import JSONResponse
 # ----------------------------
 # API SERVER
 # ----------------------------
@@ -18,6 +20,7 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  
+    # allow_origins=["http://localhost:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,3 +68,56 @@ async def ask_query(query: str = Form(...), user_id: str = Form(...)):
 
     # If not streaming → normal JSON response
     return response
+
+def is_rhaiis_endpoint_healthy() -> dict:
+    url = "http://129.40.90.163:9000/v1/completions"
+
+    try:
+        # Lightweight POST with minimal payload
+        payload = {
+            "model": "ibm-granite/granite-3.3-8b-instruct",
+            "prompt": "health check",
+            "max_tokens": 1,
+            "temperature": 0,
+            "top_p": 1.0,
+            "stream": False
+        }
+
+        response = requests.post(url, json=payload, timeout=10)
+
+        return {
+            "endpoint": url,
+            "http_status": response.status_code,
+            "reachable": response.status_code in [200, 400, 422],
+            "message": "RHAIIS service is reachable"
+        }
+
+    except requests.exceptions.Timeout:
+        return {
+            "endpoint": url,
+            "reachable": False,
+            "error": "Timeout while connecting to RHAIIS"
+        }
+
+    except requests.exceptions.ConnectionError:
+        return {
+            "endpoint": url,
+            "reachable": False,
+            "error": "Connection refused / Network issue"
+        }
+
+    except Exception as e:
+        return {
+            "endpoint": url,
+            "reachable": False,
+            "error": str(e)
+        }
+@app.get("/rhaiis/health")
+def rhaiis_health_check():
+    status = is_rhaiis_endpoint_healthy()
+
+    return JSONResponse(
+        status_code=200 if status.get("reachable") else 503,
+        content=status
+    )
+
