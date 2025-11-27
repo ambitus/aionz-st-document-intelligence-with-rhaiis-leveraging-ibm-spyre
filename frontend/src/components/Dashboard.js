@@ -19,9 +19,11 @@ const Dashboard = () => {
   const [currentUser, setCurrentUser] = useState(null);
   const [username, setUsername] = useState('');
   const [userRole, setUserRole] = useState('user');
+  
   const handleDeleteDocument = (docId) => {
     setDocuments(prevDocs => prevDocs.filter(doc => doc.id !== docId));
   };
+
   // Login handler
   const handleLogin = (e) => {
     e.preventDefault();
@@ -41,40 +43,75 @@ const Dashboard = () => {
     setUserRole('user');
   };
 
-  const handleFileUpload = (files) => {
-    const newDocuments = Array.from(files).map((file) => ({
+  const handleFileUpload = async (files) => {
+    const filesArray = Array.from(files);
+    
+    // Create initial document entries with processing status
+    const newDocuments = filesArray.map((file) => ({
       id: Date.now() + Math.random(),
       name: file.name,
       size: file.size,
       uploadedAt: new Date(),
       status: 'processing',
       summary: null,
+      extractedInfo: null,
       file: file  // Store the actual file object
     }));
 
     setDocuments(prev => [...newDocuments, ...prev]);
 
-    newDocuments.forEach((doc, index) => {
-      setTimeout(() => {
+    // Process each file with the API
+    for (const doc of newDocuments) {
+      try {
+        const formData = new FormData();
+        formData.append('files', doc.file);
+        formData.append('user_id', currentUser.username);
+
+        const response = await fetch('http://129.40.90.163:8002/upload-files', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const result = await response.json();
+        
+        // Update document with API response
         setDocuments(prev =>
           prev.map(d =>
             d.id === doc.id
               ? {
-                ...d,  // Spread the existing document (includes the file)
+                ...d,
                 status: 'ready',
-                summary: `AI-generated summary for ${doc.name}: This document has been successfully processed and analyzed. Key information has been extracted and is ready for review.`,
-                insights: {
-                  keyPoints: ['Document successfully processed', 'Key entities extracted'],
-                  entities: ['Document', 'Analysis'],
-                  sentiment: 'Neutral'
-                }
+                summary: result.summary || `Document ${doc.name} has been successfully processed and analyzed.`,
+                extractedInfo: result.extracted_text || result.content || JSON.stringify(result, null, 2),
+                apiResponse: result
               }
               : d
           )
         );
-      }, 2000 + index * 1000);
-    });
+      } catch (error) {
+        console.error(`Error processing ${doc.name}:`, error);
+        
+        // Update document with error status
+        setDocuments(prev =>
+          prev.map(d =>
+            d.id === doc.id
+              ? {
+                ...d,
+                status: 'error',
+                summary: `Error processing document: ${error.message}`,
+                extractedInfo: `Failed to process the document. Error: ${error.message}`
+              }
+              : d
+          )
+        );
+      }
+    }
   };
+  
   // Show login page if not authenticated
   if (showLogin) {
     return (
@@ -109,9 +146,7 @@ const Dashboard = () => {
             margin: '0 auto 32px',
             boxShadow: '0 8px 24px rgba(0, 98, 255, 0.4)'
           }}>
-            {/* <img src={Logo} alt="Logo" style={{ height: '50px',width:'50px'}} /> */}
-            {/* <Watson size={40} style={{ color: 'white' }} /> */}
-                      <Icons.RedHat/>
+            <Icons.RedHat/>
           </div>
 
           <h1 style={{
@@ -234,7 +269,7 @@ const Dashboard = () => {
       backgroundColor: '#f8fbff',
       fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
       minHeight: '100vh',
-      paddingTop: '140px' // Add padding to account for fixed header and tabs
+      paddingTop: '140px'
     }}>
       <style>{`
       @keyframes pulse {
@@ -248,7 +283,7 @@ const Dashboard = () => {
       {/* Navigation Tabs - Fixed */}
       <div style={{
         position: 'fixed',
-        top: '88px', // Height of the header
+        top: '88px',
         left: 0,
         right: 0,
         backgroundColor: 'white',
@@ -316,10 +351,11 @@ const Dashboard = () => {
             documents={documents}
             onUpload={handleFileUpload}
             onDelete={handleDeleteDocument}
+            currentUser={currentUser}
           />
         )}
-        {selectedTab === 2 && (
-          <AIChat documents={documents} />
+              {selectedTab === 2 && (
+          <AIChat documents={documents} currentUser={currentUser} />
         )}
         {selectedTab === 3 && (
           <SetupGuide />
