@@ -97,6 +97,8 @@ WORKDIR /home/dev/Spyre_Document_Summarizer
 
 # Copy required directories
 COPY backend ./backend
+COPY frontend ./frontend
+
 
 # Run bash
 CMD ["/bin/bash"]
