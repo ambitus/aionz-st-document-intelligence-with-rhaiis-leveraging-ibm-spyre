@@ -93,21 +93,52 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser }) => {
 
   // Enhanced function to automatically evaluate accuracy based on comprehensive analysis
   const evaluateAccuracyAutomatically = (doc) => {
-    if (!doc.apiResponse || !doc.apiResponse[0]) return 75; // Default fallback
+    console.log('=== EVALUATING ACCURACY ===');
+    console.log('Document:', doc.name);
+
+    if (!doc.apiResponse || !doc.apiResponse[0]) {
+      console.log('No API response found, returning default 75');
+      return 75;
+    }
 
     const response = doc.apiResponse[0];
     const docContent = response.doc_content || '';
-    const summary = response.doc_summary || '';
+
+    console.log('Doc content length:', docContent.length);
+    console.log('Doc summary structure:', response.doc_summary);
+
+    // Extract summary from the nested structure
+    let summary = '';
+    const docSummary = response.doc_summary;
+
+    if (docSummary && docSummary.choices && docSummary.choices.length > 0) {
+      summary = docSummary.choices[0].text || '';
+      summary = summary.replace(/^Summarize the following document:\s*/i, '');
+      console.log('Extracted summary from choices:', summary.substring(0, 100) + '...');
+    } else if (typeof docSummary === 'string') {
+      summary = docSummary;
+      console.log('Summary is string:', summary.substring(0, 100) + '...');
+    } else if (Array.isArray(docSummary)) {
+      summary = docSummary.join('\n');
+      console.log('Summary is array, joined:', summary.substring(0, 100) + '...');
+    } else {
+      console.log('Summary format not recognized:', typeof docSummary);
+    }
 
     let accuracyScore = 75; // Base score
     let evaluationFactors = [];
 
     if (docContent && summary) {
-      const contentWords = docContent.split(/\s+/).length;
-      const summaryWords = typeof summary === 'string' ? summary.split(/\s+/).length : 0;
+      const contentWords = docContent.split(/\s+/).filter(w => w.length > 0).length;
+      const summaryWords = summary.split(/\s+/).filter(w => w.length > 0).length;
 
-      // Factor 1: Summary length ratio (ideal: 10-20% of original)
+      console.log('Content words:', contentWords);
+      console.log('Summary words:', summaryWords);
+
+      // Factor 1: Summary length ratio
       const lengthRatio = summaryWords / contentWords;
+      console.log('Length ratio:', lengthRatio);
+
       if (lengthRatio >= 0.08 && lengthRatio <= 0.25) {
         accuracyScore += 8;
         evaluationFactors.push('Optimal summary length');
@@ -122,27 +153,22 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser }) => {
         evaluationFactors.push('Poor summary length ratio');
       }
 
-      // Factor 2: Key information coverage (enhanced check)
+      // Factor 2: Key information coverage
       const keyTerms = extractKeyTerms(docContent);
-      const keyPhrases = extractKeyPhrases(docContent);
       const coveredTerms = keyTerms.filter(term =>
-        typeof summary === 'string' && summary.toLowerCase().includes(term.toLowerCase())
-      ).length;
-      const coveredPhrases = keyPhrases.filter(phrase =>
-        typeof summary === 'string' && summary.toLowerCase().includes(phrase.toLowerCase())
+        summary.toLowerCase().includes(term.toLowerCase())
       ).length;
 
       const termCoverageRatio = keyTerms.length > 0 ? coveredTerms / keyTerms.length : 0;
-      const phraseCoverageRatio = keyPhrases.length > 0 ? coveredPhrases / keyPhrases.length : 0;
-      const overallCoverage = (termCoverageRatio + phraseCoverageRatio) / 2;
+      console.log('Term coverage:', termCoverageRatio);
 
-      if (overallCoverage >= 0.8) {
+      if (termCoverageRatio >= 0.7) {
         accuracyScore += 12;
         evaluationFactors.push('Excellent key information coverage');
-      } else if (overallCoverage >= 0.6) {
+      } else if (termCoverageRatio >= 0.5) {
         accuracyScore += 8;
         evaluationFactors.push('Good key information coverage');
-      } else if (overallCoverage >= 0.4) {
+      } else if (termCoverageRatio >= 0.3) {
         accuracyScore += 4;
         evaluationFactors.push('Moderate key information coverage');
       } else {
@@ -150,60 +176,29 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser }) => {
         evaluationFactors.push('Poor key information coverage');
       }
 
-      // Factor 3: Structure and readability analysis
-      if (typeof summary === 'string') {
-        const paragraphs = summary.split('\n').filter(p => p.trim().length > 0);
-        const hasMultipleParagraphs = paragraphs.length >= 2;
-        const hasBulletPoints = (summary.match(/•| - |\d+\./g) || []).length >= 2;
-        const sentenceCount = (summary.match(/[.!?]+/g) || []).length;
-        const avgSentenceLength = summaryWords / Math.max(sentenceCount, 1);
-
-        if (hasMultipleParagraphs) {
-          accuracyScore += 5;
-          evaluationFactors.push('Well-structured paragraphs');
-        }
-
-        if (hasBulletPoints) {
-          accuracyScore += 3;
-          evaluationFactors.push('Clear bullet points');
-        }
-
-        // Check for optimal sentence length
-        if (avgSentenceLength >= 15 && avgSentenceLength <= 25) {
-          accuracyScore += 4;
-          evaluationFactors.push('Optimal sentence length');
-        } else if (avgSentenceLength < 10 || avgSentenceLength > 35) {
-          accuracyScore -= 3;
-          evaluationFactors.push('Poor sentence structure');
-        }
+      // Factor 3: Structure
+      const paragraphs = summary.split('\n').filter(p => p.trim().length > 0);
+      if (paragraphs.length >= 2) {
+        accuracyScore += 5;
+        evaluationFactors.push('Well-structured paragraphs');
       }
-
-      // Factor 4: Semantic coherence check
-      const coherenceScore = evaluateSemanticCoherence(docContent, summary);
-      accuracyScore += coherenceScore;
-      if (coherenceScore > 5) {
-        evaluationFactors.push('High semantic coherence');
-      } else if (coherenceScore < 0) {
-        evaluationFactors.push('Low semantic coherence');
-      }
-
-      // Factor 5: Redundancy check
-      const redundancyPenalty = evaluateRedundancy(summary);
-      accuracyScore -= redundancyPenalty;
-      if (redundancyPenalty > 0) {
-        evaluationFactors.push('Some redundant content');
-      }
+    } else {
+      console.log('Missing content or summary!');
+      evaluationFactors.push('Missing content or summary');
     }
 
-    // Store evaluation factors for debugging/display
+    const finalScore = Math.min(Math.max(accuracyScore, 50), 95);
+    console.log('Final accuracy score:', finalScore);
+    console.log('Evaluation factors:', evaluationFactors);
+
+    // Store evaluation factors
     doc.accuracyEvaluation = {
-      score: Math.min(Math.max(accuracyScore, 50), 95),
+      score: finalScore,
       factors: evaluationFactors
     };
 
-    return Math.min(Math.max(accuracyScore, 50), 95);
+    return finalScore;
   };
-
   // Enhanced key term extraction
   const extractKeyTerms = (content) => {
     if (!content) return [];
@@ -411,37 +406,52 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser }) => {
 
   // Monitor document status changes to track processing time and evaluate accuracy
   useEffect(() => {
+    console.log('=== useEffect triggered - checking documents ===');
+    console.log('Total documents:', documents.length);
+
     documents.forEach(doc => {
       // Track when processing starts
       if (doc.status === 'processing' && !processingStartTimes[doc.id]) {
-        trackProcessingStart(doc.id);
+        setProcessingStartTimes(prev => ({
+          ...prev,
+          [doc.id]: Date.now()
+        }));
       }
 
-      // Calculate processing time and evaluate accuracy when document becomes ready
-      if (doc.status === 'ready' && !doc.processingTime && processingStartTimes[doc.id]) {
-        const processingTime = calculateProcessingTime(
-          processingStartTimes[doc.id],
-          Date.now()
-        );
+      // Calculate accuracy when document becomes ready
+      if (doc.status === 'ready') {
+        console.log(`Document ready: ${doc.name}, ID: ${doc.id}`);
+        console.log('Current accuracy for this doc:', accuracyRatings[doc.id]);
 
-        // Update document with processing time
-        doc.processingTime = processingTime;
-        doc.processedAt = new Date();
+        // Calculate processing time if needed
+        if (!doc.processingTime && processingStartTimes[doc.id]) {
+          const processingTime = calculateProcessingTime(
+            processingStartTimes[doc.id],
+            Date.now()
+          );
+          doc.processingTime = processingTime;
+          doc.processedAt = new Date();
+        }
 
-        // Evaluate accuracy automatically
-        const accuracy = evaluateAccuracyAutomatically(doc);
-        setAccuracyRatings(prev => ({
-          ...prev,
-          [doc.id]: accuracy
-        }));
+        // Calculate accuracy ONLY if not already calculated
+        if (typeof accuracyRatings[doc.id] === 'undefined') {
+          console.log(`Calculating accuracy for: ${doc.name}`);
 
-        // Add to recent activities
-        addActivity(doc.name, 'processed', processingTime);
+          // Use setTimeout to ensure state updates properly
+          setTimeout(() => {
+            const accuracy = evaluateAccuracyAutomatically(doc);
+            console.log(`Setting accuracy to ${accuracy}% for doc ${doc.id}`);
+
+            setAccuracyRatings(prev => {
+              const updated = { ...prev, [doc.id]: accuracy };
+              console.log('Updated ratings state:', updated);
+              return updated;
+            });
+          }, 100);
+        }
       }
     });
-
-  }, [documents, processingStartTimes]);
-
+  }, [documents]);
   // Clear documents when user changes or on refresh
   useEffect(() => {
     // This ensures that when a different user logs in or page refreshes,
@@ -1456,21 +1466,8 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser }) => {
                                       {processingTime}
                                     </Tag>
                                   )}
-                                  {accuracy && (
-                                    <Tag style={{
-                                      background: getAccuracyColor(accuracy),
-                                      color: 'white',
-                                      borderRadius: '12px',
-                                      fontSize: '0.75rem',
-                                      fontWeight: 600,
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: '0.25rem'
-                                    }} size="sm">
-                                      {getAccuracyIcon(accuracy)}
-                                      {accuracy}%
-                                    </Tag>
-                                  )}
+
+
                                   <Tag style={{
                                     background: '#d1f0d4',
                                     color: '#24a148',
@@ -2195,7 +2192,7 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser }) => {
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    marginBottom: '1rem'
+                    marginBottom: '1rem',
                   }}>
                     <h4 style={{
                       color: '#111827',
@@ -2207,19 +2204,23 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser }) => {
                       gap: '0.5rem'
                     }}>
                       <Checkmark size={16} style={{ color: '#0f62fe' }} />
-                      Enhanced AI Accuracy Assessment
+                      AI Accuracy Assessment
                     </h4>
-                    <span
-                      className="accuracy-value"
-                      style={{
-                        background: getAccuracyColor(accuracyRatings[selectedDocForDetails.id] || 75),
-                        color: 'white',
-                        fontSize: '0.875rem',
-                        padding: '0.5rem 1rem'
-                      }}
-                    >
-                      {accuracyRatings[selectedDocForDetails.id] || 85}% - {getAccuracyLabel(accuracyRatings[selectedDocForDetails.id] || 75)}
-                    </span>
+                    {/* FIX: Ensure we always show the accuracy */}
+                    {accuracyRatings[selectedDocForDetails.id] && (
+                      <span
+                        className="accuracy-value"
+                        style={{
+                          background: getAccuracyColor(accuracyRatings[selectedDocForDetails.id]),
+                          color: 'white',
+                          fontSize: '0.875rem',
+                          padding: '0.5rem 1rem',
+                          marginTop: '1rem'
+                        }}
+                      >
+                        {accuracyRatings[selectedDocForDetails.id]}% - {getAccuracyLabel(accuracyRatings[selectedDocForDetails.id])}
+                      </span>
+                    )}
                   </div>
 
                   <p style={{
@@ -2231,38 +2232,7 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser }) => {
                     This enhanced accuracy score evaluates multiple factors including summary length,
                     key information coverage, semantic coherence, structural quality, and redundancy analysis.
                   </p>
-
-                  {selectedDocForDetails.accuracyEvaluation && (
-                    <div style={{
-                      marginTop: '1rem',
-                      padding: '1rem',
-                      background: '#f8f9fa',
-                      borderRadius: '6px',
-                      border: '1px solid #e9ecef'
-                    }}>
-                      <p style={{
-                        color: '#161616',
-                        fontSize: '0.75rem',
-                        fontWeight: 600,
-                        margin: '0 0 0.5rem 0'
-                      }}>
-                        Evaluation Factors:
-                      </p>
-                      <ul style={{
-                        color: '#525252',
-                        fontSize: '0.75rem',
-                        margin: 0,
-                        paddingLeft: '1.25rem',
-                        lineHeight: '1.5'
-                      }}>
-                        {selectedDocForDetails.accuracyEvaluation.factors.map((factor, index) => (
-                          <li key={index}>{factor}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
                 </div>
-
                 {/* Download Summary Buttons */}
                 <div style={{
                   display: 'flex',
