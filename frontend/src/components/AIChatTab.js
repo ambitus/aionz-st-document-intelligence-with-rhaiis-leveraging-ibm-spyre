@@ -1,29 +1,45 @@
-//AIChatTab Component
 import React, { useState, useRef, useEffect } from 'react';
-import { 
+import {
   Watson,
   User,
-  Document, 
+  Document,
   Send,
-  Close} from '@carbon/icons-react';
+  Close,
+  Copy,
+  TrashCan
+} from '@carbon/icons-react';
 import {
   InlineLoading
 } from '@carbon/react';
 import Icons from './Icons'
 
 const AIChat = ({ documents, currentUser }) => {
-  const [messages, setMessages] = useState([
-    {
+  // Initialize messages from localStorage or with welcome message
+  const [messages, setMessages] = useState(() => {
+    if (currentUser?.username) {
+      const savedChat = localStorage.getItem(`chatHistory_${currentUser.username}`);
+      if (savedChat) {
+        try {
+          return JSON.parse(savedChat);
+        } catch (error) {
+          console.error('Error loading chat history:', error);
+        }
+      }
+    }
+    return [{
+      id: 'welcome-' + Date.now(),
       role: 'assistant',
       content: "Hello! I'm your IBM Document Intelligence AI Assistant. I can help you analyze documents, answer questions about their content, extract insights, and more. How can I assist you today?",
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    }
-  ]);
+    }];
+  });
+
   const [input, setInput] = useState('');
   const [selectedDocuments, setSelectedDocuments] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [streamingMessageId, setStreamingMessageId] = useState(null);
   const messagesEndRef = useRef(null);
+  const abortControllerRef = useRef(null);
 
   const suggestedPrompts = [
     'Summarize all documents',
@@ -32,10 +48,46 @@ const AIChat = ({ documents, currentUser }) => {
     'Explain the installation process'
   ];
 
+  // Save chat history to localStorage whenever messages change
+  useEffect(() => {
+    if (currentUser?.username && messages.length > 0) {
+      localStorage.setItem(`chatHistory_${currentUser.username}`, JSON.stringify(messages));
+    }
+  }, [messages, currentUser]);
+
+  // Clear chat history when user changes
+  useEffect(() => {
+    if (currentUser?.username) {
+      const savedChat = localStorage.getItem(`chatHistory_${currentUser.username}`);
+      if (savedChat) {
+        try {
+          setMessages(JSON.parse(savedChat));
+        } catch (error) {
+          console.error('Error loading chat history:', error);
+          setMessages([{
+            id: 'welcome-' + Date.now(),
+            role: 'assistant',
+            content: "Hello! I'm your IBM Document Intelligence AI Assistant. I can help you analyze documents, answer questions about their content, extract insights, and more. How can I assist you today?",
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }]);
+        }
+      }
+    }
+  }, [currentUser]);
+
   // Auto-scroll to bottom of messages
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Cleanup abort controller on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -73,38 +125,180 @@ const AIChat = ({ documents, currentUser }) => {
     setSelectedDocuments(prev => prev.filter(d => d.id !== docId));
   };
 
-  const sendQueryToAPI = async (query, username) => {
-    try {
-      const formData = new FormData();
-      formData.append('query', query);
-      formData.append('user_id', username);
-
-      const response = await fetch('http://129.40.90.163:8002/ask-query', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json();
-      return result;
-    } catch (error) {
-      console.error('Error sending query to API:', error);
-      throw error;
+  // Add function to clear chat history
+  const clearChatHistory = () => {
+    const welcomeMessage = [{
+      id: 'welcome-' + Date.now(),
+      role: 'assistant',
+      content: "Hello! I'm your IBM Document Intelligence AI Assistant. I can help you analyze documents, answer questions about their content, extract insights, and more. How can I assist you today?",
+      timestamp: getCurrentTime()
+    }];
+    setMessages(welcomeMessage);
+    if (currentUser?.username) {
+      localStorage.setItem(`chatHistory_${currentUser.username}`, JSON.stringify(welcomeMessage));
     }
   };
 
-  const sendStreamingQueryToAPI = async (query, username, onChunk) => {
+  // Function to copy message content
+  const copyToClipboard = async (content) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      // You could add a toast notification here for better UX
+      console.log('Message copied to clipboard');
+    } catch (err) {
+      console.error('Failed to copy text: ', err);
+    }
+  };
+
+  // Function to delete individual message
+  const deleteMessage = (messageId) => {
+    setMessages(prev => prev.filter(msg => msg.id !== messageId));
+  };
+
+  // Function to clean response text and format it properly
+  const cleanResponseText = (text) => {
+    if (!text) return text;
+
+    // Remove [DONE] and any trailing special characters
+    let cleaned = text.replace(/\[DONE\]/g, '').trim();
+
+    // Remove any other common streaming artifacts
+    cleaned = cleaned.replace(/\\n/g, '\n');
+
+    // Format URLs to display properly (remove angle brackets)
+    cleaned = cleaned.replace(/<([^>]+)>/g, '$1');
+
+    // Format the text for better readability
+    cleaned = formatTextForReadability(cleaned);
+
+    return cleaned;
+  };
+
+  // Function to format text with proper spacing and structure
+  const formatTextForReadability = (text) => {
+    if (!text) return text;
+
+    // Replace multiple spaces with single space
+    let formatted = text.replace(/\s+/g, ' ');
+
+    // Add proper spacing after sentences
+    formatted = formatted.replace(/([.!?])\s*([A-Z])/g, '$1\n\n$2');
+
+    // Format lists and bullet points
+    formatted = formatted.replace(/(\d+\.)\s*/g, '\n$1 ');
+    formatted = formatted.replace(/[-•*]\s*/g, '\n• ');
+
+    // Format headings or important sections
+    formatted = formatted.replace(/([A-Z][^.!?]*?:)/g, '\n\n$1\n');
+
+    // Ensure proper paragraph spacing
+    formatted = formatted.replace(/\n\s*\n/g, '\n\n');
+
+    // Trim and clean up
+    formatted = formatted.trim();
+
+    return formatted;
+  };
+
+  // Function to render formatted message content with proper line breaks and structure
+  const renderFormattedContent = (content, isStreaming = false) => {
+    if (!content) return null;
+
+    // Split content by lines and render with proper formatting
+    const lines = content.split('\n');
+
+    return (
+      <>
+        {lines.map((line, index) => {
+          const trimmedLine = line.trim();
+
+          // Skip empty lines but maintain spacing
+          if (!trimmedLine) {
+            return <div key={index} style={{ height: '0.75rem' }} />;
+          }
+
+          // Check if line is a heading (ends with colon)
+          const isHeading = trimmedLine.endsWith(':') && trimmedLine.length < 100;
+
+          // Check if line is a list item
+          const isListItem = trimmedLine.startsWith('•') ||
+            trimmedLine.startsWith('-') ||
+            /^\d+\./.test(trimmedLine);
+
+          // Check if line contains a URL
+          const containsUrl = /https?:\/\/[^\s]+/.test(trimmedLine);
+
+          return (
+            <div
+              key={index}
+              style={{
+                marginBottom: '0.5rem',
+                marginLeft: isListItem ? '1rem' : '0',
+                fontSize: '0.875rem',
+                fontWeight: isHeading ? '600' : '400',
+                color: '#161616',
+                lineHeight: '1.6',
+                padding: isHeading ? '0.25rem 0' : '0',
+                wordBreak: 'break-word'
+              }}
+            >
+              {containsUrl ? (
+                // Render URLs as clickable links
+                trimmedLine.split(/(https?:\/\/[^\s]+)/g).map((part, partIndex) => {
+                  if (part.match(/https?:\/\/[^\s]+/)) {
+                    return (
+                      <a
+                        key={partIndex}
+                        href={part}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          color: '#0f62fe',
+                          textDecoration: 'underline'
+                        }}
+                      >
+                        {part}
+                      </a>
+                    );
+                  }
+                  return part;
+                })
+              ) : (
+                trimmedLine
+              )}
+            </div>
+          );
+        })}
+      </>
+    );
+  };
+
+  const sendStreamingQueryToAPI = async (query, username, onChunk, onTimeout) => {
+    // Create abort controller for timeout handling
+    abortControllerRef.current = new AbortController();
+    const timeoutId = setTimeout(() => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        onTimeout?.();
+      }
+    }, 120000); // 2 minutes timeout
+
     try {
       const formData = new FormData();
       formData.append('query', query);
       formData.append('user_id', username);
 
+      // Send selected document IDs and filenames
+      // const documentIds = selectedDocuments.map(d => d.id).join(',');
+      const documentNames = selectedDocuments.map(d => d.name).join(',');
+
+      // formData.append('document_ids', documentIds);
+      formData.append('document_names', documentNames);
+
       const response = await fetch('http://129.40.90.163:8002/ask-query', {
         method: 'POST',
         body: formData,
+        signal: abortControllerRef.current.signal
       });
 
       if (!response.ok) {
@@ -116,6 +310,7 @@ const AIChat = ({ documents, currentUser }) => {
       if (!reader) {
         // Fallback to regular response if streaming is not supported
         const result = await response.json();
+        clearTimeout(timeoutId);
         return result;
       }
 
@@ -129,18 +324,25 @@ const AIChat = ({ documents, currentUser }) => {
         const chunk = decoder.decode(value, { stream: true });
         accumulatedText += chunk;
 
-        // Call the callback with the new chunk
+        // Clean the text before updating UI
+        const cleanedChunk = cleanResponseText(accumulatedText);
+
+        // Call the callback with the cleaned chunk
         if (onChunk) {
-          onChunk(accumulatedText);
+          onChunk(cleanedChunk);
         }
 
         // Small delay to make streaming visible
         await new Promise(resolve => setTimeout(resolve, 10));
       }
 
+      clearTimeout(timeoutId);
       return { answer: accumulatedText };
     } catch (error) {
-      console.error('Error sending streaming query to API:', error);
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error('Request timed out after 2 minutes. Showing partial response received so far.');
+      }
       throw error;
     }
   };
@@ -148,19 +350,20 @@ const AIChat = ({ documents, currentUser }) => {
   const handleSend = async () => {
     if (!input.trim() || !currentUser?.username) return;
 
-    const userMessage = { 
-      role: 'user', 
+    const userMessage = {
+      id: 'user-' + Date.now(),
+      role: 'user',
       content: input,
       timestamp: getCurrentTime()
     };
-    setMessages([...messages, userMessage]);
+    setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
 
     // Create a placeholder for the streaming response
-    const streamingMessageId = Date.now().toString();
+    const streamingMessageId = 'ai-' + Date.now();
     setStreamingMessageId(streamingMessageId);
-    
+
     const aiResponsePlaceholder = {
       id: streamingMessageId,
       role: 'assistant',
@@ -170,39 +373,66 @@ const AIChat = ({ documents, currentUser }) => {
     };
     setMessages(prev => [...prev, aiResponsePlaceholder]);
 
+    let accumulatedContent = '';
+
     try {
       // Use streaming API with callback to update UI in real-time
-      await sendStreamingQueryToAPI(input, currentUser.username, (chunk) => {
-        setMessages(prev => prev.map(msg => 
-          msg.id === streamingMessageId 
-            ? { ...msg, content: chunk }
-            : msg
-        ));
-      });
+      await sendStreamingQueryToAPI(
+        input,
+        currentUser.username,
+        (chunk) => {
+          accumulatedContent = chunk;
+          setMessages(prev => prev.map(msg =>
+            msg.id === streamingMessageId
+              ? { ...msg, content: chunk }
+              : msg
+          ));
+        },
+        // Timeout callback
+        () => {
+          if (accumulatedContent) {
+            // If we have some content, show it with a timeout notice
+            const timeoutMessage = accumulatedContent + '\n\n[Note: Response was truncated due to timeout. This is a partial response.]';
+            setMessages(prev => prev.map(msg =>
+              msg.id === streamingMessageId
+                ? { ...msg, content: timeoutMessage, isStreaming: false }
+                : msg
+            ));
+          } else {
+            // If no content received at all
+            const timeoutMessage = "I'm sorry, the request timed out after 2 minutes. Please try again with a more specific query or check your network connection.";
+            setMessages(prev => prev.map(msg =>
+              msg.id === streamingMessageId
+                ? { ...msg, content: timeoutMessage, isStreaming: false }
+                : msg
+            ));
+          }
+        }
+      );
 
-      // Streaming completed successfully
-      setMessages(prev => prev.map(msg => 
-        msg.id === streamingMessageId 
-          ? { ...msg, isStreaming: false }
+      // Streaming completed successfully - clean the final response
+      setMessages(prev => prev.map(msg =>
+        msg.id === streamingMessageId
+          ? { ...msg, content: cleanResponseText(msg.content), isStreaming: false }
           : msg
       ));
     } catch (error) {
-      console.error('Streaming failed, trying regular API:', error);
-      
-      // Fallback to regular API if streaming fails
-      try {
-        const regularResponse = await sendQueryToAPI(input, currentUser.username);
-        const finalContent = regularResponse.answer || regularResponse.response || 'I received your query but got an unexpected response format.';
-        
-        setMessages(prev => prev.map(msg => 
-          msg.id === streamingMessageId 
-            ? { ...msg, content: finalContent, isStreaming: false }
+      console.error('Streaming failed:', error);
+
+      // Handle timeout or other errors
+      if (accumulatedContent) {
+        // Show partial response with error notice
+        const errorMessage = accumulatedContent + `\n\n[Note: ${error.message}]`;
+        setMessages(prev => prev.map(msg =>
+          msg.id === streamingMessageId
+            ? { ...msg, content: errorMessage, isStreaming: false }
             : msg
         ));
-      } catch (fallbackError) {
+      } else {
         const errorResponse = {
+          id: 'error-' + Date.now(),
           role: 'assistant',
-          content: `I'm sorry, I encountered an error while processing your request: ${fallbackError.message}. Please try again.`,
+          content: `I'm sorry, I encountered an error while processing your request: ${error.message}. Please try again.`,
           timestamp: getCurrentTime()
         };
         setMessages(prev => [...prev.filter(msg => msg.id !== streamingMessageId), errorResponse]);
@@ -210,12 +440,14 @@ const AIChat = ({ documents, currentUser }) => {
     } finally {
       setIsLoading(false);
       setStreamingMessageId(null);
+      abortControllerRef.current = null;
     }
   };
 
   const handlePromptClick = async (prompt) => {
     if (!currentUser?.username) {
       const errorMessage = {
+        id: 'error-' + Date.now(),
         role: 'assistant',
         content: "Please make sure you're logged in to use the AI assistant.",
         timestamp: getCurrentTime()
@@ -225,18 +457,19 @@ const AIChat = ({ documents, currentUser }) => {
     }
 
     setInput(prompt);
-    const userMessage = { 
-      role: 'user', 
+    const userMessage = {
+      id: 'user-' + Date.now(),
+      role: 'user',
       content: prompt,
       timestamp: getCurrentTime()
     };
-    setMessages([...messages, userMessage]);
+    setMessages(prev => [...prev, userMessage]);
     setIsLoading(true);
 
     // Create a placeholder for the streaming response
-    const streamingMessageId = Date.now().toString();
+    const streamingMessageId = 'ai-' + Date.now();
     setStreamingMessageId(streamingMessageId);
-    
+
     const aiResponsePlaceholder = {
       id: streamingMessageId,
       role: 'assistant',
@@ -246,39 +479,66 @@ const AIChat = ({ documents, currentUser }) => {
     };
     setMessages(prev => [...prev, aiResponsePlaceholder]);
 
+    let accumulatedContent = '';
+
     try {
       // Use streaming API with callback to update UI in real-time
-      await sendStreamingQueryToAPI(prompt, currentUser.username, (chunk) => {
-        setMessages(prev => prev.map(msg => 
-          msg.id === streamingMessageId 
-            ? { ...msg, content: chunk }
-            : msg
-        ));
-      });
+      await sendStreamingQueryToAPI(
+        prompt,
+        currentUser.username,
+        (chunk) => {
+          accumulatedContent = chunk;
+          setMessages(prev => prev.map(msg =>
+            msg.id === streamingMessageId
+              ? { ...msg, content: chunk }
+              : msg
+          ));
+        },
+        // Timeout callback
+        () => {
+          if (accumulatedContent) {
+            // If we have some content, show it with a timeout notice
+            const timeoutMessage = accumulatedContent + '\n\n[Note: Response was truncated due to timeout. This is a partial response.]';
+            setMessages(prev => prev.map(msg =>
+              msg.id === streamingMessageId
+                ? { ...msg, content: timeoutMessage, isStreaming: false }
+                : msg
+            ));
+          } else {
+            // If no content received at all
+            const timeoutMessage = "I'm sorry, the request timed out after 2 minutes. Please try again with a more specific query or check your network connection.";
+            setMessages(prev => prev.map(msg =>
+              msg.id === streamingMessageId
+                ? { ...msg, content: timeoutMessage, isStreaming: false }
+                : msg
+            ));
+          }
+        }
+      );
 
-      // Streaming completed successfully
-      setMessages(prev => prev.map(msg => 
-        msg.id === streamingMessageId 
-          ? { ...msg, isStreaming: false }
+      // Streaming completed successfully - clean the final response
+      setMessages(prev => prev.map(msg =>
+        msg.id === streamingMessageId
+          ? { ...msg, content: cleanResponseText(msg.content), isStreaming: false }
           : msg
       ));
     } catch (error) {
-      console.error('Streaming failed, trying regular API:', error);
-      
-      // Fallback to regular API if streaming fails
-      try {
-        const regularResponse = await sendQueryToAPI(prompt, currentUser.username);
-        const finalContent = regularResponse.answer || regularResponse.response || 'I received your query but got an unexpected response format.';
-        
-        setMessages(prev => prev.map(msg => 
-          msg.id === streamingMessageId 
-            ? { ...msg, content: finalContent, isStreaming: false }
+      console.error('Streaming failed:', error);
+
+      // Handle timeout or other errors
+      if (accumulatedContent) {
+        // Show partial response with error notice
+        const errorMessage = accumulatedContent + `\n\n[Note: ${error.message}]`;
+        setMessages(prev => prev.map(msg =>
+          msg.id === streamingMessageId
+            ? { ...msg, content: errorMessage, isStreaming: false }
             : msg
         ));
-      } catch (fallbackError) {
+      } else {
         const errorResponse = {
+          id: 'error-' + Date.now(),
           role: 'assistant',
-          content: `I'm sorry, I encountered an error while processing your request: ${fallbackError.message}. Please try again.`,
+          content: `I'm sorry, I encountered an error while processing your request: ${error.message}. Please try again.`,
           timestamp: getCurrentTime()
         };
         setMessages(prev => [...prev.filter(msg => msg.id !== streamingMessageId), errorResponse]);
@@ -286,14 +546,15 @@ const AIChat = ({ documents, currentUser }) => {
     } finally {
       setIsLoading(false);
       setStreamingMessageId(null);
+      abortControllerRef.current = null;
     }
   };
 
   return (
-    <div style={{ 
-      display: 'grid', 
-      gridTemplateColumns: '2fr 1fr', 
-      gap: '1.5rem', 
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: '2fr 1fr',
+      gap: '1.5rem',
       padding: '2rem',
       height: 'calc(100vh - 140px)',
       overflow: 'hidden',
@@ -308,11 +569,12 @@ const AIChat = ({ documents, currentUser }) => {
         boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
         overflow: 'hidden'
       }}>
-        {/* Chat Header with Selected Documents */}
+        {/* Chat Header with Selected Documents and Clear Chat Button */}
         <div style={{
           padding: '1.5rem',
           borderBottom: '2px solid #f4f4f4',
-          background: 'linear-gradient(to right, #f8f9fa, white)'
+          background: 'linear-gradient(to right, #f8f9fa, white)',
+          position: 'relative'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: selectedDocuments.length > 0 ? '1rem' : '0' }}>
             <div style={{
@@ -324,26 +586,59 @@ const AIChat = ({ documents, currentUser }) => {
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <Icons.RedHat/>
+              <Icons.RedHat />
             </div>
-            <div>
-              <h3 style={{ 
-                color: '#161616', 
-                margin: 0, 
+            <div style={{ flex: 1 }}>
+              <h3 style={{
+                color: '#161616',
+                margin: 0,
                 fontSize: '1.125rem',
-                fontWeight: 500 
+                fontWeight: 500
               }}>
                 AI Assistant
               </h3>
-              <p style={{ 
-                color: '#525252', 
-                margin: 0, 
-                fontSize: '0.875rem' 
+              <p style={{
+                color: '#525252',
+                margin: 0,
+                fontSize: '0.875rem'
               }}>
                 Powered by IBM RedHat Inference server with Spyre
               </p>
             </div>
           </div>
+
+          {/* Clear Chat Button */}
+          <button
+            onClick={clearChatHistory}
+            disabled={isLoading}
+            style={{
+              position: 'absolute',
+              top: '1.5rem',
+              right: '1.5rem',
+              background: '#fff1f1',
+              border: '1px solid #ffd7d9',
+              color: '#da1e28',
+              padding: '0.4rem 0.8rem',
+              borderRadius: '6px',
+              fontSize: '0.7rem',
+              fontWeight: 500,
+              cursor: isLoading ? 'not-allowed' : 'pointer',
+              transition: 'all 0.2s',
+              opacity: isLoading ? 0.6 : 1
+            }}
+            onMouseEnter={(e) => {
+              if (!isLoading) {
+                e.target.style.background = '#ffd7d9';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!isLoading) {
+                e.target.style.background = '#fff1f1';
+              }
+            }}
+          >
+            Clear Chat
+          </button>
 
           {/* Selected Documents in Header */}
           {selectedDocuments.length > 0 && (
@@ -398,7 +693,8 @@ const AIChat = ({ documents, currentUser }) => {
         }}>
           {messages.map((msg, idx) => (
             <div key={msg.id || idx} style={{
-              marginBottom: '1.5rem'
+              marginBottom: '1.5rem',
+              position: 'relative'
             }}>
               {/* Message Header */}
               <div style={{
@@ -416,15 +712,15 @@ const AIChat = ({ documents, currentUser }) => {
                     width: '24px',
                     height: '24px',
                     borderRadius: '4px',
-                    background: msg.role === 'assistant' 
-                      ? 'linear-gradient(to bottom right, #0f62fe, #0353e9)' 
+                    background: msg.role === 'assistant'
+                      ? 'linear-gradient(to bottom right, #0f62fe, #0353e9)'
                       : '#e0e0e0',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center'
                   }}>
                     {msg.role === 'assistant' ? (
-                      <Icons.RedHat/>
+                      <Icons.RedHat />
                     ) : (
                       <User size={12} style={{ color: '#525252' }} />
                     )}
@@ -438,8 +734,8 @@ const AIChat = ({ documents, currentUser }) => {
                   </span>
                   {msg.isStreaming && (
                     <div style={{
-                      width: '8px',
-                      height: '8px',
+                      width: '4px',
+                      height: '4px',
                       background: '#0f62fe',
                       borderRadius: '50%',
                       animation: 'pulse 1.5s infinite'
@@ -455,47 +751,122 @@ const AIChat = ({ documents, currentUser }) => {
               </div>
 
               {/* Message Content */}
-              <div style={{
-                background: msg.role === 'assistant' ? 'white' : '#edf5ff',
-                border: `2px solid ${msg.role === 'assistant' ? '#e0e0e0' : '#d0e2ff'}`,
-                borderRadius: '8px',
-                padding: '1rem',
-                marginLeft: msg.role === 'assistant' ? '0' : '2rem',
-                position: 'relative'
-              }}>
-                {/* Main message content */}
+              <div
+                style={{
+                  background: msg.role === 'assistant' ? 'white' : '#edf5ff',
+                  border: `2px solid ${msg.role === 'assistant' ? '#e0e0e0' : '#d0e2ff'}`,
+                  borderRadius: '8px',
+                  padding: '1rem',
+                  marginLeft: msg.role === 'assistant' ? '0' : '2rem',
+                  position: 'relative'
+                }}
+                className="message-container"
+              >
                 <div style={{
                   color: '#161616',
                   lineHeight: '1.5',
-                  whiteSpace: 'pre-line'
+                  fontSize: '0.875rem',
+                  wordBreak: 'break-word',
+                  minHeight: msg.isStreaming && !msg.content ? '40px' : 'auto'
                 }}>
-                  {msg.content}
-                  {msg.isStreaming && (
-                    <span style={{
-                      display: 'inline-block',
-                      width: '8px',
-                      height: '16px',
-                      background: '#0f62fe',
-                      marginLeft: '4px',
-                      animation: 'blink 1s infinite',
-                      verticalAlign: 'middle'
-                    }} />
+                  {msg.role === 'assistant' ?
+                    renderFormattedContent(msg.content, msg.isStreaming) :
+                    msg.content
+                  }
+
+                  {msg.isStreaming && !msg.content && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <InlineLoading
+                        description="AI is thinking..."
+                        status="active"
+                      />
+                    </div>
                   )}
                 </div>
-                
-                {/* Loading indicator for empty streaming messages */}
-                {msg.isStreaming && !msg.content && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <InlineLoading
-                      description="AI is thinking..."
-                      status="active"
-                    />
+
+                {/* Message Action Buttons - Only show for non-streaming assistant messages at the bottom */}
+                {!msg.isStreaming && msg.role === 'assistant' && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'flex-end',
+                      gap: '0.5rem',
+                      marginTop: '1rem',
+                      paddingTop: '0.75rem',
+                      borderTop: '1px solid #f0f0f0',
+                      opacity: 0,
+                      transition: 'opacity 0.2s'
+                    }}
+                    className="message-actions"
+                  >
+                    {/* Copy Button */}
+                    {msg.id !== messages[0]?.id && (
+                      <button
+                        onClick={() => copyToClipboard(msg.content)}
+                        style={{
+                          background: 'transparent',
+                          border: '1px solid #e0e0e0',
+                          borderRadius: '4px',
+                          padding: '0.4rem 0.6rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.25rem',
+                          fontSize: '0.7rem',
+                          color: '#525252',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        <Copy size={10} />
+                        Copy
+                      </button>
+                    )}
+
+                    {/* Delete Button - Don't show for welcome message */}
+                    {msg.id !== messages[0]?.id && (
+
+                      <button
+                        onClick={() => deleteMessage(msg.id)}
+                        style={{
+                          background: 'transparent',
+                          border: '1px solid #ffd7d9',
+                          borderRadius: '4px',
+                          padding: '0.4rem 0.6rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.25rem',
+                          fontSize: '0.7rem',
+                          color: '#da1e28',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        <TrashCan size={10} />
+                        Delete
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
+
+              {/* CSS for hover effect on message actions */}
+              <style jsx>{`
+                .message-container:hover .message-actions {
+                  opacity: 1 !important;
+                }
+                @keyframes blink {
+                  0%, 50% { opacity: 1; }
+                  51%, 100% { opacity: 0; }
+                }
+                @keyframes pulse {
+                  0% { opacity: 1; }
+                  50% { opacity: 0.5; }
+                  100% { opacity: 1; }
+                }
+              `}</style>
             </div>
           ))}
-          
+
           <div ref={messagesEndRef} />
         </div>
 
@@ -686,7 +1057,7 @@ const AIChat = ({ documents, currentUser }) => {
               {selectedDocuments.length} selected
             </span>
           </div>
-          
+
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -700,12 +1071,12 @@ const AIChat = ({ documents, currentUser }) => {
                 margin: 0,
               }}>
                 Total Documents
-               <span style={{
-                color: '#161616',
-                fontSize: '1rem',
-                margin: 0,
-                fontWeight: 500
-              }}> {documents.length}</span>
+                <span style={{
+                  color: '#161616',
+                  fontSize: '1rem',
+                  margin: 0,
+                  fontWeight: 500
+                }}> {documents.length}</span>
               </p>
             </div>
           </div>
@@ -717,7 +1088,7 @@ const AIChat = ({ documents, currentUser }) => {
             gap: '0.75rem',
             marginBottom: '1rem'
           }}>
-            <button 
+            <button
               onClick={handleSelectAll}
               disabled={isLoading}
               style={{
@@ -745,7 +1116,7 @@ const AIChat = ({ documents, currentUser }) => {
             >
               Select All
             </button>
-            <button 
+            <button
               onClick={handleClearAll}
               disabled={isLoading}
               style={{
@@ -776,8 +1147,8 @@ const AIChat = ({ documents, currentUser }) => {
           </div>
 
           {/* Documents List with Scroll */}
-          <div style={{ 
-            flex: 1, 
+          <div style={{
+            flex: 1,
             overflowY: 'auto',
             border: '1px solid #e0e0e0',
             borderRadius: '6px',
@@ -789,7 +1160,7 @@ const AIChat = ({ documents, currentUser }) => {
               gap: '0.5rem'
             }}>
               {documents.map((doc, idx) => (
-                <div 
+                <div
                   key={doc.id}
                   style={{
                     display: 'flex',
@@ -855,20 +1226,20 @@ const AIChat = ({ documents, currentUser }) => {
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
-            <Icons.RedHat/>
+            <Icons.RedHat />
             <div>
-              <p style={{ 
-                color: '#161616', 
-                margin: 0, 
+              <p style={{
+                color: '#161616',
+                margin: 0,
                 fontSize: '0.875rem',
-                fontWeight: 500 
+                fontWeight: 500
               }}>
                 RHAIIS AI Online
               </p>
-              <p style={{ 
-                color: '#525252', 
-                margin: 0, 
-                fontSize: '0.75rem' 
+              <p style={{
+                color: '#525252',
+                margin: 0,
+                fontSize: '0.75rem'
               }}>
                 Natural Language Understanding
               </p>

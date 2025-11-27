@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
     Login,
     Logout,
+    Cloud
 } from '@carbon/icons-react';
 import {
     Header,
@@ -16,18 +17,47 @@ import Icons from './Icons'
 const CustomHeader = ({ onLogout, currentUser }) => {
     const [showUserMenu, setShowUserMenu] = useState(false);
     const menuRef = useRef(null);
+const [serviceHealthy, setServiceHealthy] = useState(false);
+
 
     // Close menu when clicking outside
-    useEffect(() => {
-        const handleClickOutside = (event) => {
-            if (menuRef.current && !menuRef.current.contains(event.target)) {
-                setShowUserMenu(false);
-            }
-        };
+useEffect(() => {
+    const handleClickOutside = (event) => {
+        if (menuRef.current && !menuRef.current.contains(event.target)) {
+            setShowUserMenu(false);
+        }
+    };
 
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, []);
+    const checkServiceHealth = async () => {
+        try {
+            const res = await fetch("http://129.40.90.163:8002/rhaiis/health", {
+                method: "GET",
+                headers: { "accept": "application/json" }
+            });
+
+            const data = await res.json();
+            setServiceHealthy(data.reachable);
+        } catch (e) {
+            console.error("Health check failed:", e);
+            setServiceHealthy(false);
+        }
+    };
+
+    // Run once on load
+    checkServiceHealth();
+
+    // OPTIONAL: auto polling every 60 seconds
+    const interval = setInterval(checkServiceHealth, 60000);
+
+    document.addEventListener("mousedown", handleClickOutside);
+
+    return () => {
+        document.removeEventListener("mousedown", handleClickOutside);
+        clearInterval(interval);
+    };
+}, []);
+
+
 
     return (
         <div style={{
@@ -115,7 +145,7 @@ const CustomHeader = ({ onLogout, currentUser }) => {
                                     }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                             <div style={{ position: 'relative' }}>
-                                                <div style={{ width: '20px', height: '20px', color: '#42be65' }}><Icons.Cloud /></div>
+                                                <div style={{ width: '20px', height: '20px', color: '#42be65' }}><Cloud /></div>
                                                 <div style={{
                                                     position: 'absolute',
                                                     top: '-4px',
@@ -127,8 +157,17 @@ const CustomHeader = ({ onLogout, currentUser }) => {
                                                 }} />
                                             </div>
                                             <div style={{ fontSize: '0.875rem' }}>
+                                                {/* <p style={{ color: '#c6c6c6', fontSize: '0.75rem', margin: 0 }}>AI</p>
+                                                <p style={{ color: '#42be65', fontWeight: 500, margin: 0 }}>Online</p> */}
                                                 <p style={{ color: '#c6c6c6', fontSize: '0.75rem', margin: 0 }}>AI</p>
-                                                <p style={{ color: '#42be65', fontWeight: 500, margin: 0 }}>Online</p>
+                                                <p style={{ 
+                                                    color: serviceHealthy ? '#42be65' : '#da1e28',
+                                                    fontWeight: 500, 
+                                                    margin: 0 
+                                                }}>
+                                                    {serviceHealthy ? "Online" : "Offline"}
+                                                </p>
+
                                             </div>
                                         </div>
 
@@ -139,8 +178,24 @@ const CustomHeader = ({ onLogout, currentUser }) => {
                                             <div style={{ fontSize: '0.875rem' }}>
                                                 <p style={{ color: '#c6c6c6', fontSize: '0.75rem', margin: 0 }}>RHAIIS API</p>
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                                                    <div style={{ width: '12px', height: '12px', color: '#42be65' }}><Icons.CheckCircle /></div>
-                                                    <span style={{ color: '#42be65', fontWeight: 500 }}>Active</span>
+                                                    {/* <div style={{ width: '12px', height: '12px', color: '#42be65' }}><Icons.CheckCircle /></div>
+                                                    <span style={{ color: '#42be65', fontWeight: 500 }}>Active</span> */}
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                                    <div style={{ 
+                                                        width: '12px', 
+                                                        height: '12px', 
+                                                        color: serviceHealthy ? '#42be65' : '#da1e28'
+                                                    }}>
+                                                        {serviceHealthy ? <Icons.CheckCircle /> : <Icons.CloseCircle />}
+                                                    </div>
+
+                                                    <span style={{ 
+                                                        color: serviceHealthy ? '#42be65' : '#da1e28',
+                                                        fontWeight: 500 
+                                                    }}>
+                                                        {serviceHealthy ? "Active" : "Not Active"}
+                                                    </span>
+                                                </div>
                                                 </div>
                                             </div>
                                         </div>
