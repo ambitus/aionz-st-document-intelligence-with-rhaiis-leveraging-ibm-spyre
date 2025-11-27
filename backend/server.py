@@ -1,5 +1,6 @@
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from typing import List
 
 from mongo_utils import ingest_document_in_mongodb
@@ -45,18 +46,22 @@ async def upload_files(files: List[UploadFile] = File(...), user_id:str = Form(.
 
 
 @app.post("/ask-query")
-async def ask_query(query: str = Form(...), user_id:str = Form(...)):
+async def ask_query(query: str = Form(...), user_id: str = Form(...)):
     collection_name = f"user_{user_id}"
 
     retriever = get_retriever_os(collection_name)
-    retrieved_chunks = retriever.get_relevant_documents(query)[:2]
+    retrieved_chunks = retriever.get_relevant_documents(query)[:5]
 
     prompt = build_rag_prompt(query, retrieved_chunks)
     print("\nPrompt to send to LLM:\n")
     print(prompt)
 
     # --- CALL YOUR LLM HERE ---
-    response = call_rhaiis_model(prompt)
-    green_log(response["choices"][0]["text"])
+    response = call_rhaiis_model(prompt, stream=True)
 
+    # If streaming → wrap in StreamingResponse (SSE)
+    if hasattr(response, "__iter__") and not isinstance(response, dict):
+        return StreamingResponse(response, media_type="text/event-stream")
+
+    # If not streaming → normal JSON response
     return response
