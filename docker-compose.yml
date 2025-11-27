@@ -13,20 +13,47 @@ services:
       - label=disable
     volumes:
       - ./backend:/home/dev/Spyre_Document_Summarizer/backend
+      - ./frontend:/home/dev/Spyre_Document_Summarizer/frontend
       - /run/podman/podman.sock:/run/podman/podman.sock
     working_dir: /home/dev/Spyre_Document_Summarizer
     environment:
       - REACT_APP_API_BASE_URL=${REACT_APP_API_BASE_URL}
     command: >
       bash -c "
-        echo 'Activating virtual environment...' &&
-        source /home/dev/devenv/bin/activate || echo 'Failed to activate venv' &&
-        echo 'Installing Python packages...' &&
-        pip install sklearn2pmml sentence_transformers colorama || echo 'Pip install failed' &&
-        echo 'Starting backend server...' &&
-        cd backend &&
-        uvicorn server:app --host 0.0.0.0 --port 8002 --reload
+        set -e;
+
+        echo 'Starting container...';
+
+        source /home/dev/devenv/bin/activate || true;
+
+        pip install -q sklearn2pmml sentence_transformers colorama || true;
+
+        mkdir -p /home/dev/Spyre_Document_Summarizer &&
+        mkdir -p /home/dev/Spyre_Document_Summarizer/logs;
+
+        echo 'Listing project directory:' &&
+        ls -l /home/dev/Spyre_Document_Summarizer;
+
+        if [ -d /home/dev/Spyre_Document_Summarizer/frontend ]; then
+          cd /home/dev/Spyre_Document_Summarizer/frontend &&
+          rm -rf node_modules &&
+          npm install --silent &&
+          PORT=3002 npm start --silent > /home/dev/Spyre_Document_Summarizer/logs/frontend.log 2>&1 &
+        else
+          echo 'ERROR: frontend directory not found' > /home/dev/Spyre_Document_Summarizer/logs/frontend.log
+        fi;
+
+        if [ -d /home/dev/Spyre_Document_Summarizer/backend ]; then
+          cd /home/dev/Spyre_Document_Summarizer/backend &&
+          uvicorn server:app --host 0.0.0.0 --port 8002 > /home/dev/Spyre_Document_Summarizer/logs/backend.log 2>&1 &
+        else
+          echo 'ERROR: backend directory not found' > /home/dev/Spyre_Document_Summarizer/logs/backend.log
+        fi;
+
+        tail -f /home/dev/Spyre_Document_Summarizer/logs/frontend.log /home/dev/Spyre_Document_Summarizer/logs/backend.log
       "
+
+
     tty: true
     ports:
       - "3002:3002"
