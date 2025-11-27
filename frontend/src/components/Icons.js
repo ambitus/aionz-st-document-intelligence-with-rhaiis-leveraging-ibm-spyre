@@ -4,10 +4,10 @@ import {
   Document, 
   Settings,
   Send,
-  Upload
+  CheckmarkFilled,
+  CloseFilled
 } from '@carbon/icons-react';
 import RedHat from '../assets/Red_Hat.svg';
-
 // Icons component remains the same
 const Icons = {
   Upload: () => (
@@ -19,7 +19,9 @@ const Icons = {
   ),
     RedHat:()=>(<img src={RedHat} alt="Logo" style={{ height: '30px',width:'30px'}} />),
   DocumentIntelize:()=>(<svg width="48" height="48" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8 10h16M8 13h16M8 16h16M8 19h16M8 22h16" stroke="white" stroke-width="2"></path><path d="M12 10v12M20 10v12" stroke="white" stroke-width="2"></path></svg>
-),
+),  
+ CheckCircle: CheckmarkFilled,  // You used <Icons.CheckCircle />
+    CloseCircle: CloseFilled  ,
    Home: Home,
     FileText: Document,
     MessageSquare: Chat,

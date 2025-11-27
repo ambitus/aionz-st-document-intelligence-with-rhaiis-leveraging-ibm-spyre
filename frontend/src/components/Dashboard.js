@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Watson,
   Login,
@@ -19,7 +19,16 @@ const Dashboard = () => {
   const [currentUser, setCurrentUser] = useState(null);
   const [username, setUsername] = useState('');
   const [userRole, setUserRole] = useState('user');
-  
+
+  // Clear documents when user changes
+  useEffect(() => {
+    if (currentUser) {
+      // When a new user logs in, clear documents
+      // In a real app, you would fetch documents for the current user from backend
+      setDocuments([]);
+    }
+  }, [currentUser?.username]); // Only trigger when username changes
+
   const handleDeleteDocument = (docId) => {
     setDocuments(prevDocs => prevDocs.filter(doc => doc.id !== docId));
   };
@@ -41,11 +50,12 @@ const Dashboard = () => {
     setCurrentUser(null);
     setShowLogin(true);
     setUserRole('user');
+    setDocuments([]); // Clear all documents on logout
   };
 
   const handleFileUpload = async (files) => {
     const filesArray = Array.from(files);
-    
+
     // Create initial document entries with processing status
     const newDocuments = filesArray.map((file) => ({
       id: Date.now() + Math.random(),
@@ -77,7 +87,7 @@ const Dashboard = () => {
         }
 
         const result = await response.json();
-        
+
         // Update document with API response
         setDocuments(prev =>
           prev.map(d =>
@@ -94,7 +104,7 @@ const Dashboard = () => {
         );
       } catch (error) {
         console.error(`Error processing ${doc.name}:`, error);
-        
+
         // Update document with error status
         setDocuments(prev =>
           prev.map(d =>
@@ -111,7 +121,7 @@ const Dashboard = () => {
       }
     }
   };
-  
+
   // Show login page if not authenticated
   if (showLogin) {
     return (
@@ -146,7 +156,7 @@ const Dashboard = () => {
             margin: '0 auto 32px',
             boxShadow: '0 8px 24px rgba(0, 98, 255, 0.4)'
           }}>
-            <Icons.RedHat/>
+            <Icons.RedHat />
           </div>
 
           <h1 style={{
@@ -354,7 +364,7 @@ const Dashboard = () => {
             currentUser={currentUser}
           />
         )}
-              {selectedTab === 2 && (
+        {selectedTab === 2 && (
           <AIChat documents={documents} currentUser={currentUser} />
         )}
         {selectedTab === 3 && (
