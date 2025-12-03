@@ -1247,7 +1247,7 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser }) => {
                     status="active"
                   />
                   <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: '#525252' }}>
-                    Uploading to API endpoint...
+                    Document uploaded, summarizing the document......
                   </p>
                 </div>
               </div>
