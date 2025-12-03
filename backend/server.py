@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from typing import List
 
-from mongo_utils import ingest_document_in_mongodb
+from mongo_utils import check_user_exist,ingest_document_in_mongodb
 from opensearch_utils import get_retriever_os
 from rag import build_rag_prompt
 from rhaiis_utils import call_rhaiis_model
@@ -25,6 +25,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.post("/user_exists_check")
+async def user_exists(user_id:str):
+    return check_user_exist(user_id) 
 
 
 @app.post("/upload-files")
@@ -112,6 +117,7 @@ def is_rhaiis_endpoint_healthy() -> dict:
             "reachable": False,
             "error": str(e)
         }
+
 @app.get("/rhaiis/health")
 def rhaiis_health_check():
     status = is_rhaiis_endpoint_healthy()
