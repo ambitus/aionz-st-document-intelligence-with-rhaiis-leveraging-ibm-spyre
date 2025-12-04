@@ -26,7 +26,7 @@ services:
 
         source /home/dev/devenv/bin/activate || true;
 
-        pip install -q sklearn2pmml sentence_transformers colorama || true;
+        pip install -q sklearn2pmml sentence_transformers colorama rouge-score || true;
 
         mkdir -p /home/dev/Spyre_Document_Summarizer &&
         mkdir -p /home/dev/Spyre_Document_Summarizer/logs;

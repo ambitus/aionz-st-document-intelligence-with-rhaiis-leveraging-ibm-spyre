@@ -13,20 +13,6 @@ from utils import green_log
 # ----------------------------
 
 
-def summarize(doc_content):
-    try:
-        prompt = f""" 
-        Summarize the following document
-        
-        Document:
-        {doc_content}
-        """
-        response = call_rhaiis_model_without_streaming(prompt)
-        return response
-    except:
-        return "Error in document summarization"
-
-
 class TLSAdapter(HTTPAdapter):
     """Custom Adapter to enforce TLS 1.2+"""
     def init_poolmanager(self, *args, **kwargs):

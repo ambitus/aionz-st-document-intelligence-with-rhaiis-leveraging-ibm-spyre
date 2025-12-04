@@ -2,7 +2,7 @@ from datetime import datetime
 from tqdm import tqdm
 from pymongo import MongoClient
 from opensearch_utils import ingest_code_to_os, get_os_connection, create_os_vectorstore
-from rhaiis_utils import summarize
+from rag import summarize
 from config import (
     EMBEDDING_MODEL,
     MONGO_DB_HOST
@@ -20,6 +20,7 @@ def mongo_db_connection():
     db = client["document_store"]
     return db
 
+
 def check_user_exist(user_id: str):
     """
     Check if a user exists
@@ -35,6 +36,7 @@ def check_user_exist(user_id: str):
         docs = list(collection.find({}))
         all_doc_summary = [convert_mongo_doc(doc) for doc in docs]
         return all_doc_summary
+
 
 def get_or_create_user_collection(mongo_db, user_id: str):
     """
@@ -96,6 +98,7 @@ def convert_mongo_doc(doc):
     doc["_id"] = str(doc["_id"])
     return doc
 
+
 def ingest_document_in_mongodb(docs,user_id):
     mongo_db = mongo_db_connection()
 
@@ -141,3 +144,142 @@ def ingest_document_in_mongodb(docs,user_id):
         print(f"Added summary for document '{doc_name}'")
         doc_summarised.append({"filename": doc_name, "doc_content": doc_content, "doc_summary":doc_summary})
     return doc_summarised
+
+
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
+from datetime import datetime
+
+# Create thread pool for CPU-bound operations
+executor = ThreadPoolExecutor(max_workers=4)
+
+async def ingest_documents_with_summaries_in_background(
+    docs_with_summaries: list, 
+    user_id: str
+):
+    """Background task to ingest documents with their summaries - FIXED VERSION"""
+    try:
+        # Debug: Check what we're receiving
+        print(f"Starting background ingestion for user {user_id}")
+        print(f"Received {len(docs_with_summaries) if docs_with_summaries else 0} documents")
+        
+        if not docs_with_summaries:
+            print("No documents to process")
+            return
+            
+        # Check structure of first document
+        if docs_with_summaries and isinstance(docs_with_summaries[0], dict):
+            print(f"First document structure: {list(docs_with_summaries[0].keys())}")
+        else:
+            print(f"Unexpected document structure: {type(docs_with_summaries[0])}")
+            return
+        
+        # Run in thread pool to avoid blocking the event loop
+        result = await asyncio.get_event_loop().run_in_executor(
+            executor,
+            lambda: ingest_documents_to_mongodb_and_opensearch(docs_with_summaries, user_id)
+        )
+        
+        print(f"Background ingestion completed for user {user_id}")
+        return result
+        
+    except Exception as e:
+        print(f"Error in background ingestion setup: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def ingest_documents_to_mongodb_and_opensearch(docs_with_summaries: list, user_id: str):
+    """Ingest documents with pre-computed summaries to MongoDB and OpenSearch - FIXED"""
+    try:
+        print(f"Starting MongoDB/OpenSearch ingestion for {len(docs_with_summaries)} documents")
+        
+        # Connect to MongoDB
+        mongo_db = mongo_db_connection()
+        
+        # Creating user specific collections
+        collection_name = f"user_{user_id}"
+        collection = get_or_create_user_collection(mongo_db, collection_name)
+        
+        for i, doc_data in enumerate(docs_with_summaries):
+            # Ensure doc_data is a dictionary
+            if not isinstance(doc_data, dict):
+                print(f"Document {i} is not a dict: {type(doc_data)}")
+                continue
+                
+            doc_name = doc_data.get("filename", f"unknown_{i}")
+            doc_content = doc_data.get("content", "")
+            doc_summary = doc_data.get("summary_clean", doc_data.get("summary", ""))
+            
+            if not doc_content:
+                print(f"Skipping document {doc_name}: No content")
+                continue
+                
+            print(f"Processing document {i+1}/{len(docs_with_summaries)}: {doc_name}")
+            
+            # Check for existing document
+            existing = collection.find_one({"doc_name": doc_name})
+            if existing:
+                print(f"Skipping duplicate document '{doc_name}' for user '{user_id}'")
+                continue
+            
+            try:
+                # Calculate scores if scorer is available
+                if 'scorer' in globals() and doc_summary:
+                    scores = scorer.score(doc_content, doc_summary)
+                    print(f"Scores for {doc_name}: {scores}")
+                else:
+                    scores = {"rouge1": 0, "rouge2": 0, "rougeL": 0}
+                    print(f"No scorer available for {doc_name}, using default scores")
+            except Exception as e:
+                print(f"Error calculating scores for {doc_name}: {e}")
+                scores = {"rouge1": 0, "rouge2": 0, "rougeL": 0}
+            
+            # Create the document entry with summary
+            document = {
+                "doc_name": doc_name,
+                "doc_content": doc_content,
+                "doc_summary": doc_summary,
+                "uploaded_at": datetime.now().isoformat(),
+                "Rouge_Score": scores
+            }
+            
+            # Insert document into MongoDB
+            try:
+                result = collection.insert_one(document)
+                print(f"Added document '{doc_name}' to MongoDB with ID: {result.inserted_id}")
+            except Exception as e:
+                print(f"Error inserting into MongoDB: {e}")
+                continue
+            
+            # Ingest to OpenSearch - FIXED: Pass proper format
+            try:
+                # Prepare data in the format expected by ingest_code_to_os
+                # It expects a list of dicts with "filename" and "text" keys
+                os_doc = [{
+                    "filename": doc_name,
+                    "text": doc_content
+                }]
+                
+                # Make sure EMBEDDING_MODEL is defined
+                embedding_model = globals().get('EMBEDDING_MODEL', 'all-MiniLM-L6-v2')
+                
+                print(f"Preparing to ingest to OpenSearch: {doc_name} (content length: {len(doc_content)})")
+                
+                # Call ingest_code_to_os with the correct format
+                ingest_code_to_os(os_doc, embedding_model, collection_name)
+                
+                print(f"Ingested '{doc_name}' to OpenSearch")
+            except Exception as e:
+                print(f"Error ingesting to OpenSearch: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue even if OpenSearch fails
+        
+        print(f"Completed ingestion of {len(docs_with_summaries)} documents for user {user_id}")
+        
+    except Exception as e:
+        print(f"Critical error in ingestion: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
