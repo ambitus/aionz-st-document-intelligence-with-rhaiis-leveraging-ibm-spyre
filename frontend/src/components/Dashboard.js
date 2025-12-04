@@ -76,8 +76,9 @@ const Dashboard = () => {
         const formData = new FormData();
         formData.append('files', doc.file);
         formData.append('user_id', currentUser.username);
-
-        const response = await fetch('http://129.40.90.163:8002/upload-files', {
+        const apiUrl = process.env.REACT_APP_API_BASE_URL  
+        const response = await fetch(`${apiUrl}/upload-files`,{
+        // const response = await fetch('http://129.40.90.163:8002/upload-files', {
           method: 'POST',
           body: formData,
         });

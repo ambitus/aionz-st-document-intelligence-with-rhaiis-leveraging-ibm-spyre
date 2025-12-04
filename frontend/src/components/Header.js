@@ -30,7 +30,9 @@ useEffect(() => {
 
     const checkServiceHealth = async () => {
         try {
-            const res = await fetch("http://129.40.90.163:8002/rhaiis/health", {
+                const apiUrl = process.env.REACT_APP_API_BASE_URL  
+                const res = await fetch(`${apiUrl}/rhaiis/health`,{
+                // const res = await fetch("http://129.40.90.163:8002/rhaiis/health", {
                 method: "GET",
                 headers: { "accept": "application/json" }
             });
