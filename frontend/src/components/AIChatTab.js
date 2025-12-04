@@ -294,8 +294,9 @@ const AIChat = ({ documents, currentUser }) => {
 
       // formData.append('document_ids', documentIds);
       formData.append('document_names', documentNames);
-
-      const response = await fetch('http://129.40.90.163:8002/ask-query', {
+      const apiUrl = process.env.REACT_APP_API_BASE_URL  
+      const response = await fetch(`${apiUrl}/ask-query`,{
+      // const response = await fetch('http://129.40.90.163:8002/ask-query', {
         method: 'POST',
         body: formData,
         signal: abortControllerRef.current.signal
