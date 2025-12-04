@@ -9,6 +9,8 @@ from opensearchpy import OpenSearch
 from langchain.vectorstores import OpenSearchVectorSearch
 from langchain.embeddings import HuggingFaceEmbeddings
 from config import OS_HOST, EMBEDDING_MODEL, CHUNK_SIZE, CHUNK_OVERLAP
+from typing import List
+import json
 
 
 def get_os_connection():
@@ -83,6 +85,145 @@ def ingest_code_to_os(docs, model_name=EMBEDDING_MODEL, index_name="shreyaganesh
 
     vectorstore.add_texts(texts=all_chunks, metadatas=all_metadata)
     print(f"Ingested {len(all_chunks)} new code chunks into `{index_name}`")
+
+
+def get_retriever_os_with_filter(collection_name: str, document_names: List[str] = None):
+    """
+    Create a retriever with optional document filtering.
+    
+    Args:
+        collection_name: OpenSearch index/collection name
+        document_names: List of document names to filter by (if None, retrieves from all documents)
+    """
+    embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    
+    vectorstore = OpenSearchVectorSearch(
+        index_name=collection_name,
+        embedding_function=embedder,
+        opensearch_url=OS_HOST,
+        vector_field="embedding",
+        space_type="cosinesimil",
+    )
+    
+    # If document_names is provided and not empty, create a filter
+    if document_names and len(document_names) > 0:
+        # Create filter for document names
+        def filter_function(doc):
+            metadata = doc.metadata
+            return metadata.get("doc_name") in document_names
+        
+        # Create a self-query retriever or filter retriever
+        retriever = vectorstore.as_retriever(
+            search_kwargs={
+                "k": 10,  # Retrieve more initially, then filter
+                "filter": {
+                    "bool": {
+                        "should": [
+                            {"term": {"metadata.doc_name": doc_name}} 
+                            for doc_name in document_names
+                        ]
+                    }
+                }
+            }
+        )
+    else:
+        # No filter - retrieve from all documents
+        retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+    
+    return retriever
+
+
+from typing import List, Optional
+from langchain.schema import Document
+
+def retrieve_with_smart_fallback(
+    query: str,
+    collection_name: str,
+    document_names: Optional[List[str]] = None,
+    k: int = 5
+) -> List[Document]:
+    """
+    Smart retrieval that checks if documents exist before falling back.
+    """
+    from opensearchpy import OpenSearch
+    
+    # First, check if the specified documents exist in the collection
+    os_client = OpenSearch(
+        hosts=[OS_HOST],
+        http_compress=True,
+    )
+    
+    if document_names and len(document_names) > 0:
+        # Check which documents actually exist in the index
+        existing_docs = []
+        for doc_name in document_names:
+            try:
+                # Search for any chunks from this document
+                search_body = {
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {"term": {"metadata.doc_name": doc_name}}
+                            ]
+                        }
+                    },
+                    "size": 1
+                }
+                
+                response = os_client.search(
+                    index=collection_name,
+                    body=search_body
+                )
+                
+                if response["hits"]["total"]["value"] > 0:
+                    existing_docs.append(doc_name)
+                else:
+                    print(f"Document '{doc_name}' not found in collection")
+                    
+            except Exception as e:
+                print(f"Error checking document '{doc_name}': {e}")
+        
+        # If none of the specified documents exist, use all documents
+        if len(existing_docs) == 0:
+            print("None of the specified documents exist, retrieving from all documents")
+            document_names = None
+        else:
+            # Use only the documents that exist
+            if len(existing_docs) != len(document_names):
+                print(f"Using only existing documents: {existing_docs}")
+            document_names = existing_docs
+    
+    # Now retrieve with the appropriate filter
+    embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    
+    vectorstore = OpenSearchVectorSearch(
+        index_name=collection_name,
+        embedding_function=embedder,
+        opensearch_url=OS_HOST,
+        vector_field="embedding",
+        space_type="cosinesimil",
+    )
+    
+    if document_names and len(document_names) > 0:
+        filter_query = {
+            "bool": {
+                "should": [
+                    {"term": {"metadata.doc_name": doc_name}} 
+                    for doc_name in document_names
+                ]
+            }
+        }
+        
+        retriever = vectorstore.as_retriever(
+            search_kwargs={
+                "k": k,
+                "filter": filter_query
+            }
+        )
+    else:
+        retriever = vectorstore.as_retriever(search_kwargs={"k": k})
+    
+    return retriever.get_relevant_documents(query)[:k]
 
 
 def create_os_vectorstore(index_name: str, model_name: str = EMBEDDING_MODEL, drop_old: bool = False, es_client=None):
