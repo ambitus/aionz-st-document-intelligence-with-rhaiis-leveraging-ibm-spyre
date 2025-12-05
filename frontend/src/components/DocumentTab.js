@@ -765,10 +765,17 @@ useEffect(() => {
         @keyframes shimmer { 0% { background-position: -1000px 0; } 100% { background-position: 1000px 0; } }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .processing-overlay {
-          position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
           background: rgba(255, 255, 255, 0.9);
-          display: flex; align-items: center; justifyContent: center;
-          border-radius: 8px; z-index: 10;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 8px;
+          z-index: 10;
         }
         .streaming-text { animation: pulse 1.5s ease-in-out infinite; }
         .shimmer-bg {
