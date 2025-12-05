@@ -8,9 +8,10 @@ from tqdm import tqdm
 from opensearchpy import OpenSearch
 from langchain.vectorstores import OpenSearchVectorSearch
 from langchain.embeddings import HuggingFaceEmbeddings
-from config import OS_HOST, EMBEDDING_MODEL, CHUNK_SIZE, CHUNK_OVERLAP
-from typing import List
-import json
+from config import OS_HOST, EMBEDDING_MODEL
+from utils import chunk_code
+from typing import List, Optional
+from langchain.schema import Document
 
 
 def get_os_connection():
@@ -22,25 +23,41 @@ def get_os_connection():
     )
 
 
-def chunk_code(code_text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
-    """
-    Split source code into overlapping line-based chunks.
+def create_os_vectorstore(index_name: str, model_name: str = EMBEDDING_MODEL, drop_old: bool = False, es_client=None):
+    es_client = get_os_connection()
 
-    Args:
-        code_text (str): Full source code as a single string.
-        size (int): Number of lines per chunk.
-        overlap (int): Number of overlapping lines between consecutive chunks.
+    if drop_old and es_client.indices.exists(index=index_name):
+        es_client.indices.delete(index=index_name)
+        print(f"Dropped old index `{index_name}`")
 
-    Returns:
-        list[str]: List of code chunks.
-    """
-    lines = code_text.split("\n")
-    chunks = []
-    for i in range(0, len(lines), size - overlap):
-        chunk = "\n".join(lines[i:i + size])
-        if chunk.strip():
-            chunks.append(chunk)
-    return chunks
+    embedder = HuggingFaceEmbeddings(model_name=model_name)
+
+    return OpenSearchVectorSearch(
+        index_name=index_name,
+        embedding_function=embedder,
+        opensearch_url=OS_HOST,
+        vector_field="embedding",
+        space_type="cosinesimil",
+    )
+
+
+def get_retriever_os(collection_name: str, model_name: str = EMBEDDING_MODEL, es_client=None):
+    vectorstore = create_os_vectorstore(
+        collection_name,
+        model_name=model_name,
+        drop_old=False,
+        es_client=es_client
+    )
+
+    print(f"Using retriever on index `{collection_name}` with field `embedding`")
+
+    return vectorstore.as_retriever(
+        search_type="similarity",
+        search_kwargs={
+            "k": 5,
+            "param": {"ef": 50}
+        }
+    )
 
 
 def ingest_code_to_os(docs, model_name=EMBEDDING_MODEL, index_name="shreyaganeshe46@gmail.com"):
@@ -87,54 +104,69 @@ def ingest_code_to_os(docs, model_name=EMBEDDING_MODEL, index_name="shreyaganesh
     print(f"Ingested {len(all_chunks)} new code chunks into `{index_name}`")
 
 
-def get_retriever_os_with_filter(collection_name: str, document_names: List[str] = None):
+async def delete_from_opensearch(user_id: str, filename: str) -> bool:
     """
-    Create a retriever with optional document filtering.
+    Delete a document from OpenSearch
     
     Args:
-        collection_name: OpenSearch index/collection name
-        document_names: List of document names to filter by (if None, retrieves from all documents)
+        user_id: User identifier
+        filename: Name of the file to delete
+    
+    Returns:
+        bool: True if deleted, False if not found
     """
-    embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-    
-    vectorstore = OpenSearchVectorSearch(
-        index_name=collection_name,
-        embedding_function=embedder,
-        opensearch_url=OS_HOST,
-        vector_field="embedding",
-        space_type="cosinesimil",
-    )
-    
-    # If document_names is provided and not empty, create a filter
-    if document_names and len(document_names) > 0:
-        # Create filter for document names
-        def filter_function(doc):
-            metadata = doc.metadata
-            return metadata.get("doc_name") in document_names
+    try:
+        client = get_os_connection()
         
-        # Create a self-query retriever or filter retriever
-        retriever = vectorstore.as_retriever(
-            search_kwargs={
-                "k": 10,  # Retrieve more initially, then filter
-                "filter": {
-                    "bool": {
-                        "should": [
-                            {"term": {"metadata.doc_name": doc_name}} 
-                            for doc_name in document_names
-                        ]
-                    }
+        # Index name based on user_id (matching your existing pattern)
+        index_name = f"user_{user_id}"
+        
+        # First, check if the index exists
+        if not client.indices.exists(index=index_name):
+            print(f"Index '{index_name}' does not exist in OpenSearch")
+            return False
+        
+        # Search for the document by filename
+        search_query = {
+            "query": {
+                "term": {
+                    "filename.keyword": filename
                 }
             }
+        }
+        
+        # Search for the document
+        search_response = client.search(
+            index=index_name,
+            body=search_query,
+            _source=False  # We only need the document IDs
         )
-    else:
-        # No filter - retrieve from all documents
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-    
-    return retriever
+        
+        deleted_count = 0
+        
+        # Delete each matching document
+        for hit in search_response['hits']['hits']:
+            doc_id = hit['_id']
+            delete_response = client.delete(
+                index=index_name,
+                id=doc_id,
+                refresh=True  # Make deletion immediately visible
+            )
+            
+            if delete_response['result'] == 'deleted':
+                deleted_count += 1
+                print(f"Deleted document '{filename}' (ID: {doc_id}) from OpenSearch index '{index_name}'")
+        
+        if deleted_count > 0:
+            return True
+        else:
+            print(f"Document '{filename}' not found in OpenSearch index '{index_name}'")
+            return False
+            
+    except Exception as e:
+        print(f"Error deleting from OpenSearch for user {user_id}, file {filename}: {e}")
+        raise
 
-
-from typing import List, Optional
-from langchain.schema import Document
 
 def retrieve_with_smart_fallback(
     query: str,
@@ -224,40 +256,3 @@ def retrieve_with_smart_fallback(
         retriever = vectorstore.as_retriever(search_kwargs={"k": k})
     
     return retriever.get_relevant_documents(query)[:k]
-
-
-def create_os_vectorstore(index_name: str, model_name: str = EMBEDDING_MODEL, drop_old: bool = False, es_client=None):
-    es_client = get_os_connection()
-
-    if drop_old and es_client.indices.exists(index=index_name):
-        es_client.indices.delete(index=index_name)
-        print(f"Dropped old index `{index_name}`")
-
-    embedder = HuggingFaceEmbeddings(model_name=model_name)
-
-    return OpenSearchVectorSearch(
-        index_name=index_name,
-        embedding_function=embedder,
-        opensearch_url=OS_HOST,
-        vector_field="embedding",
-        space_type="cosinesimil",
-    )
-
-
-def get_retriever_os(collection_name: str, model_name: str = EMBEDDING_MODEL, es_client=None):
-    vectorstore = create_os_vectorstore(
-        collection_name,
-        model_name=model_name,
-        drop_old=False,
-        es_client=es_client
-    )
-
-    print(f"Using retriever on index `{collection_name}` with field `embedding`")
-
-    return vectorstore.as_retriever(
-        search_type="similarity",
-        search_kwargs={
-            "k": 5,
-            "param": {"ef": 50}
-        }
-    )

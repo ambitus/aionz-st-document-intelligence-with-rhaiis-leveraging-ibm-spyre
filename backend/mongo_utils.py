@@ -9,6 +9,12 @@ from config import (
 )
 from bson import ObjectId
 from rouge_score import rouge_scorer
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
+from datetime import datetime
+
+# Create thread pool for CPU-bound operations
+executor = ThreadPoolExecutor(max_workers=4)
 
 
 scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
@@ -19,6 +25,11 @@ def mongo_db_connection():
     #create a database/get the existing db
     db = client["document_store"]
     return db
+
+
+def convert_mongo_doc(doc):
+    doc["_id"] = str(doc["_id"])
+    return doc
 
 
 def check_user_exist(user_id: str):
@@ -94,11 +105,6 @@ def get_or_create_user_collection(mongo_db, user_id: str):
     return mongo_db[collection_name]
 
 
-def convert_mongo_doc(doc):
-    doc["_id"] = str(doc["_id"])
-    return doc
-
-
 def ingest_document_in_mongodb(docs,user_id):
     mongo_db = mongo_db_connection()
 
@@ -145,13 +151,6 @@ def ingest_document_in_mongodb(docs,user_id):
         doc_summarised.append({"filename": doc_name, "doc_content": doc_content, "doc_summary":doc_summary})
     return doc_summarised
 
-
-from concurrent.futures import ThreadPoolExecutor
-import asyncio
-from datetime import datetime
-
-# Create thread pool for CPU-bound operations
-executor = ThreadPoolExecutor(max_workers=4)
 
 async def ingest_documents_with_summaries_in_background(
     docs_with_summaries: list, 
@@ -282,4 +281,34 @@ def ingest_documents_to_mongodb_and_opensearch(docs_with_summaries: list, user_i
         print(f"Critical error in ingestion: {e}")
         import traceback
         traceback.print_exc()
+        raise
+
+
+async def delete_from_mongodb(user_id: str, filename: str) -> bool:
+    """
+    Delete a single document from MongoDB
+    """
+    try:
+        def sync_delete():
+            db = mongo_db_connection()
+            collection_name = f"user_{user_id}"
+            collection = db[collection_name]
+            result = collection.delete_one({"doc_name": filename})
+            return result
+        
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+        
+        executor = ThreadPoolExecutor(max_workers=5)
+        result = await asyncio.get_event_loop().run_in_executor(executor, sync_delete)
+        
+        if result.deleted_count > 0:
+            print(f"Deleted '{filename}' from MongoDB")
+            return True
+        else:
+            print(f"Document '{filename}' not found in MongoDB")
+            return False
+            
+    except Exception as e:
+        print(f"Error deleting from MongoDB: {e}")
         raise
