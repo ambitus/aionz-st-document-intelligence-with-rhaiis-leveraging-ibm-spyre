@@ -12,7 +12,7 @@ from typing import AsyncGenerator, Any
 from collections import defaultdict
 
 
-MAX_TOKENS=16000
+MAX_TOKENS=6000
 MAX_PROMPT_LENGTH=10000
 
 # ----------------------------
