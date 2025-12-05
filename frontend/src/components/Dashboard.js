@@ -10,7 +10,6 @@ import SetupGuide from './SetupGuide'
 import CustomHeader from './Header'
 import HomePage from './HomeTab'
 import Icons from './Icons'
-import Logo from '../assets/Redhat.png'
 
 const Dashboard = () => {
   const [selectedTab, setSelectedTab] = useState(0);
@@ -19,13 +18,155 @@ const Dashboard = () => {
   const [currentUser, setCurrentUser] = useState(null);
   const [username, setUsername] = useState('');
   const [userRole, setUserRole] = useState('user');
+  const [uploadingFiles, setUploadingFiles] = useState(new Set());
+  const [loadingUserDocuments, setLoadingUserDocuments] = useState(false);
+
+  // Fetch user documents when user logs in
+  const fetchUserDocuments = async (username) => {
+    if (!username) return;
+    
+    setLoadingUserDocuments(true);
+    try {
+      console.log(`Fetching documents for user: ${username}`);
+      
+      // The API expects user_id as a query parameter in GET request
+      const encodedUsername = encodeURIComponent(username);
+      const apiUrl = process.env.REACT_APP_API_BASE_URL  
+      const response = await fetch(
+        `${apiUrl}/user_exists_check?user_id=${encodedUsername}`,
+        {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+          }
+        }
+      );
+      
+      console.log('Response status:', response.status);
+      
+      if (!response.ok) {
+        // If GET fails, maybe it's actually a POST endpoint
+        if (response.status === 405) {
+          console.log('GET failed with 405, trying POST...');
+          // Try POST with query parameter in URL
+          const postResponse = await fetch(
+            `${apiUrl}/user_exists_check?user_id=${encodedUsername}`,
+            {
+              method: 'POST',
+              headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+              },
+              // Some APIs expect an empty body or specific body for POST
+              body: JSON.stringify({})
+            }
+          );
+          
+          if (!postResponse.ok) {
+            throw new Error(`POST failed with status: ${postResponse.status}`);
+          }
+          
+          const userDocuments = await postResponse.json();
+          processUserDocuments(userDocuments, username);
+          return;
+        }
+        
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const userDocuments = await response.json();
+      console.log('Received user documents:', userDocuments);
+      processUserDocuments(userDocuments, username);
+      
+    } catch (error) {
+      console.error('Error fetching user documents:', error);
+      // If there's an error, still show the UI but with no documents
+      // This allows users to upload new documents
+    } finally {
+      setLoadingUserDocuments(false);
+    }
+  };
+
+// Helper function to process user documents
+const processUserDocuments = (userDocuments, username) => {
+  if (!userDocuments) {
+    console.log('No response data received');
+    setDocuments([]);
+    return;
+  }
+  
+  // Handle error response format
+  if (userDocuments.detail) {
+    console.log('Error response from server:', userDocuments.detail);
+    setDocuments([]);
+    return;
+  }
+  
+  // Handle different response formats
+  let documentsArray = [];
+  
+  if (Array.isArray(userDocuments)) {
+    documentsArray = userDocuments;
+    console.log('Received array of', documentsArray.length, 'documents');
+  } else if (userDocuments.documents && Array.isArray(userDocuments.documents)) {
+    documentsArray = userDocuments.documents;
+  } else if (typeof userDocuments === 'object' && userDocuments !== null) {
+    // Try to extract array from object
+    const keys = Object.keys(userDocuments);
+    if (keys.length > 0 && Array.isArray(userDocuments[keys[0]])) {
+      documentsArray = userDocuments[keys[0]];
+    } else {
+      // If it's a single document object, wrap in array
+      documentsArray = [userDocuments];
+    }
+  }
+  
+  if (documentsArray.length > 0) {
+    const transformedDocs = documentsArray.map((doc, index) => ({
+      id: doc._id || `server_doc_${Date.now()}_${index}`,
+      name: doc.doc_name || `Document ${index + 1}`,
+      size: doc.size || 0,
+      uploadedAt: doc.uploaded_at ? new Date(doc.uploaded_at) : new Date(),
+      status: 'ready',
+      // Use the actual doc_summary from API response
+      summary: doc.doc_summary || `Document "${doc.doc_name || `Document ${index + 1}`}" loaded from server storage.`,
+      // Use the actual doc_content from API response
+      extractedInfo: doc.doc_content || '',
+      file: null,
+      processingTime: null,
+      apiResponse: [{
+        doc_summary: { 
+          choices: [{ 
+            text: doc.doc_summary || 
+              `Document: ${doc.doc_name || `Document ${index + 1}`}\n\nThis document was loaded from server storage.`
+          }] 
+        },
+        doc_content: doc.doc_content || '',
+        filename: doc.doc_name || `Document ${index + 1}`,
+        rouge_scores: doc.Rouge_Score || null,
+        uploaded_at: doc.uploaded_at,
+        // Include the original doc_summary as separate field for easy access
+        original_summary: doc.doc_summary
+      }],
+      uploadedBy: username,
+      fromServer: true,
+      serverData: doc,
+      fileType: doc.doc_name ? doc.doc_name.split('.').pop().toLowerCase() : 'unknown'
+    }));
+    
+    setDocuments(transformedDocs);
+    console.log(`Loaded ${transformedDocs.length} documents for user: ${username}`);
+  } else {
+    setDocuments([]);
+    console.log(`No documents found for user: ${username}`);
+  }
+};
 
   // Clear documents when user changes
   useEffect(() => {
-    if (currentUser) {
-      // When a new user logs in, clear documents
-      // In a real app, you would fetch documents for the current user from backend
-      setDocuments([]);
+    if (currentUser && currentUser.username) {
+      // When a new user logs in, fetch their documents from server
+      fetchUserDocuments(currentUser.username);
     }
   }, [currentUser?.username]); // Only trigger when username changes
 
@@ -33,15 +174,68 @@ const Dashboard = () => {
     setDocuments(prevDocs => prevDocs.filter(doc => doc.id !== docId));
   };
 
+  // Handle file upload - updated to support streaming
+  const handleFileUpload = async (files, finalDoc = null) => {
+    console.log('handleFileUpload called with:', files.length, 'files');
+    
+    // If we have a final document from streaming, just add it
+    if (finalDoc) {
+      console.log('Adding final document from streaming:', finalDoc.name);
+      // Mark as not from server
+      const docWithServerFlag = {
+        ...finalDoc,
+        fromServer: false,
+        uploadedBy: currentUser?.username
+      };
+      setDocuments(prev => [...prev, docWithServerFlag]);
+      return;
+    }
+
+    // Fallback for non-streaming uploads (shouldn't be used with streaming)
+    const newDocuments = Array.from(files).map(file => ({
+      id: Date.now() + Math.random(),
+      name: file.name,
+      size: file.size,
+      uploadedAt: new Date(),
+      status: 'processing',
+      file: file,
+      summary: '',
+      extractedInfo: '',
+      fromServer: false,
+      uploadedBy: currentUser?.username
+    }));
+
+    setDocuments(prev => [...prev, ...newDocuments]);
+
+    // Simulate processing (only for fallback)
+    setTimeout(() => {
+      setDocuments(prev => prev.map(doc => {
+        if (newDocuments.find(nd => nd.id === doc.id)) {
+          return {
+            ...doc,
+            status: 'ready',
+            summary: 'This is a simulated summary for: ' + doc.name,
+            extractedInfo: 'Simulated extracted content for: ' + doc.name,
+            processingTime: '3s'
+          };
+        }
+        return doc;
+      }));
+    }, 3000);
+  };
+
   // Login handler
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     if (username.trim()) {
       const role = username.toLowerCase() === 'admin' ? 'admin' : 'user';
-      setCurrentUser({ username: username.trim(), role });
-      setShowLogin(false);
-      setUsername('');
+      const userObj = { username: username.trim(), role };
+      setCurrentUser(userObj);
       setUserRole(role);
+      setUsername('');
+      
+      // Don't hide login immediately - let documents load first
+      setShowLogin(false);
     }
   };
 
@@ -51,76 +245,7 @@ const Dashboard = () => {
     setShowLogin(true);
     setUserRole('user');
     setDocuments([]); // Clear all documents on logout
-  };
-
-  const handleFileUpload = async (files) => {
-    const filesArray = Array.from(files);
-
-    // Create initial document entries with processing status
-    const newDocuments = filesArray.map((file) => ({
-      id: Date.now() + Math.random(),
-      name: file.name,
-      size: file.size,
-      uploadedAt: new Date(),
-      status: 'processing',
-      summary: null,
-      extractedInfo: null,
-      file: file  // Store the actual file object
-    }));
-
-    setDocuments(prev => [...newDocuments, ...prev]);
-
-    // Process each file with the API
-    for (const doc of newDocuments) {
-      try {
-        const formData = new FormData();
-        formData.append('files', doc.file);
-        formData.append('user_id', currentUser.username);
-        const apiUrl = process.env.REACT_APP_API_BASE_URL  
-        const response = await fetch(`${apiUrl}/upload-files`,{
-        // const response = await fetch('http://129.40.90.163:8002/upload-files', {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const result = await response.json();
-
-        // Update document with API response
-        setDocuments(prev =>
-          prev.map(d =>
-            d.id === doc.id
-              ? {
-                ...d,
-                status: 'ready',
-                summary: result.summary || `Document ${doc.name} has been successfully processed and analyzed.`,
-                extractedInfo: result.extracted_text || result.content || JSON.stringify(result, null, 2),
-                apiResponse: result
-              }
-              : d
-          )
-        );
-      } catch (error) {
-        console.error(`Error processing ${doc.name}:`, error);
-
-        // Update document with error status
-        setDocuments(prev =>
-          prev.map(d =>
-            d.id === doc.id
-              ? {
-                ...d,
-                status: 'error',
-                summary: `Error processing document: ${error.message}`,
-                extractedInfo: `Failed to process the document. Error: ${error.message}`
-              }
-              : d
-          )
-        );
-      }
-    }
+    setUploadingFiles(new Set());
   };
 
   // Show login page if not authenticated
@@ -245,9 +370,26 @@ const Dashboard = () => {
                 transition: 'all 0.2s',
                 boxShadow: '0 8px 24px rgba(0, 98, 255, 0.4)'
               }}
+              disabled={loadingUserDocuments}
             >
-              <Login size={20} />
-              Sign In to Dashboard
+              {loadingUserDocuments ? (
+                <>
+                  <div style={{
+                    width: '20px',
+                    height: '20px',
+                    border: '2px solid white',
+                    borderTopColor: 'transparent',
+                    borderRadius: '50%',
+                    animation: 'spin 1s linear infinite'
+                  }} />
+                  Loading...
+                </>
+              ) : (
+                <>
+                  <Login size={20} />
+                  Sign In to Dashboard
+                </>
+              )}
             </button>
           </form>
 
@@ -286,6 +428,10 @@ const Dashboard = () => {
       @keyframes pulse {
         0%, 100% { opacity: 1; }
         50% { opacity: 0.5; }
+      }
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
       }
     `}</style>
 
@@ -363,6 +509,7 @@ const Dashboard = () => {
             onUpload={handleFileUpload}
             onDelete={handleDeleteDocument}
             currentUser={currentUser}
+            loadingUserDocuments={loadingUserDocuments}
           />
         )}
         {selectedTab === 2 && (
