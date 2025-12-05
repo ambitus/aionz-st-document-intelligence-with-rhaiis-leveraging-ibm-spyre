@@ -9,14 +9,16 @@ import {
   Close,
   Checkmark,
   Warning,
-  Error
+  Error,
+  StopFilled
 } from '@carbon/icons-react';
 import {
   Button,
   Tag,
   InlineLoading,
   Tile,
-  Stack
+  Stack,
+  NotificationActionButton
 } from '@carbon/react';
 import Icons from './Icons'
 
@@ -33,7 +35,6 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser, loadingUserD
   const [fileSizeModalOpen, setFileSizeModalOpen] = useState(false);
   const [oversizedFiles, setOversizedFiles] = useState([]);
   const [loadingServerDocuments, setLoadingServerDocuments] = useState(false);
-
   
   // Enhanced streaming state
   const [streamingDocuments, setStreamingDocuments] = useState({});
@@ -43,8 +44,12 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser, loadingUserD
   const [activeStreamingDoc, setActiveStreamingDoc] = useState(null);
   const [streamingStatus, setStreamingStatus] = useState({});
   const [streamingProgress, setStreamingProgress] = useState({});
-  const [documentContent, setDocumentContent] = useState({}); // Store raw document content
-  const [streamingError, setStreamingError] = useState({}); // Store streaming errors
+  const [documentContent, setDocumentContent] = useState({});
+  const [streamingError, setStreamingError] = useState({});
+  
+  // New state for controlling streaming
+  const [streamingControllers, setStreamingControllers] = useState({});
+  const [isStopping, setIsStopping] = useState(false);
 
   const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
@@ -101,7 +106,136 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser, loadingUserD
     return null;
   };
 
-  // Enhanced streaming upload handler with improved parsing
+  // Function to stop streaming for a specific document
+const stopStreaming = async (tempDocId) => {
+  if (streamingControllers[tempDocId]) {
+    streamingControllers[tempDocId].abort();
+    setIsStopping(true);
+    
+    const currentDoc = streamingDocuments[tempDocId];
+    const currentSummary = streamingSummaries[tempDocId] || '';
+    const currentContent = documentContent[tempDocId] || streamingContent[tempDocId] || '';
+    
+    // Check if we have any partial data to save
+    const hasPartialData = currentSummary.trim().length > 0 || currentContent.trim().length > 0;
+    
+    if (hasPartialData) {
+      const endTime = Date.now();
+      const processingTime = calculateProcessingTime(currentDoc.startTime, endTime);
+      
+      // Update the streaming document status
+      setStreamingDocuments(prev => ({
+        ...prev,
+        [tempDocId]: {
+          ...prev[tempDocId],
+          status: 'complete', // Mark as complete instead of stopped
+          processingTime,
+          completedAt: new Date(),
+          completed: true
+        }
+      }));
+      
+      setStreamingError(prev => ({ ...prev, [tempDocId]: null }));
+      setStreamingStatus(prev => ({
+        ...prev,
+        [tempDocId]: `✓ Processing stopped early - Partial summary saved (${processingTime})`
+      }));
+      setStreamingProgress(prev => ({ ...prev, [tempDocId]: 90 }));
+       const finalDoc = {
+        id: `doc_${Date.now()}_${Math.random()}`,
+        name: currentDoc.name,
+        size: currentDoc.size,
+        uploadedAt: new Date(),
+        status: 'ready',
+        summary: currentSummary || `Document ${currentDoc.name} processing was stopped early. Partial results available.`,
+        extractedInfo: currentContent || 'Partial content extracted',
+        file: currentDoc.file,
+        processingTime: processingTime,
+        apiResponse: [{
+          doc_summary: { choices: [{ text: currentSummary || 'Processing stopped early - partial summary' }] },
+          doc_content: currentContent || '',
+          filename: currentDoc.name,
+          partial: true, // Flag to indicate partial results
+          stopped_early: true
+        }]
+      };
+
+      // Add to documents list via onUpload callback
+      if (onUpload) {
+        await onUpload([], finalDoc);
+      }
+
+      addActivity(currentDoc.name, 'partially processed', processingTime, 'completed');
+      
+      // Show success message
+      setTimeout(() => {
+        setStreamingStatus(prev => ({
+          ...prev,
+          [tempDocId]: `✓ Partial results saved to recent documents`
+        }));
+      }, 500);
+    } else {
+      // No data at all - mark as error
+      setStreamingDocuments(prev => ({
+        ...prev,
+        [tempDocId]: {
+          ...prev[tempDocId],
+          status: 'error',
+          error: 'Processing stopped before any data was received'
+        }
+      }));
+      
+      setStreamingError(prev => ({ ...prev, [tempDocId]: 'Processing stopped before any data was received' }));
+      setStreamingStatus(prev => ({
+        ...prev,
+        [tempDocId]: '✗ No data received - processing stopped'
+      }));
+      setStreamingProgress(prev => ({ ...prev, [tempDocId]: 0 }));
+      
+      addActivity(currentDoc.name, 'upload stopped with no data', null, 'error');
+      
+      // Create error document
+      const errorDoc = {
+        id: `doc_${Date.now()}_${Math.random()}`,
+        name: currentDoc.name,
+        size: currentDoc.size,
+        uploadedAt: new Date(),
+        status: 'error',
+        summary: `Processing stopped before any data was received for ${currentDoc.name}`,
+        extractedInfo: '',
+        file: currentDoc.file,
+        processingTime: null,
+        apiResponse: [],
+        error: 'Processing stopped by user before any data was received'
+      };
+
+      if (onUpload) {
+        await onUpload([], errorDoc);
+      }
+    }
+      
+      // Add activity
+      addActivity(streamingDocuments[tempDocId]?.name || 'Unknown', 'upload stopped', null, 'stopped');
+      
+      // Remove from uploading files
+     const updatedUploadingFiles = new Set(uploadingFiles);
+    updatedUploadingFiles.delete(currentDoc?.name || '');
+    setUploadingFiles(updatedUploadingFiles);
+    
+    // Remove controller
+    setStreamingControllers(prev => {
+      const newControllers = { ...prev };
+      delete newControllers[tempDocId];
+      return newControllers;
+    });
+    
+    // Don't auto-close modal - let user see the results
+    setIsStopping(false);
+
+    }
+  };
+
+  // Enhanced streaming upload handler with abort controller
   const handleStreamingUpload = async (files) => {
     const filesArray = Array.from(files);
     
@@ -133,6 +267,13 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser, loadingUserD
       const tempDocId = `temp_${Date.now()}_${Math.random()}`;
       const startTime = Date.now();
       
+      // Create abort controller for this upload
+      const controller = new AbortController();
+      setStreamingControllers(prev => ({
+        ...prev,
+        [tempDocId]: controller
+      }));
+
       // Initialize streaming state
       setStreamingDocuments(prev => ({
         ...prev,
@@ -163,6 +304,7 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser, loadingUserD
         const formData = new FormData();
         formData.append('files', file);
         formData.append('user_id', currentUser.username);
+
         const apiUrl = process.env.REACT_APP_API_BASE_URL  
        // const streamUrl = process.env.REACT_APP_API_BASE_URL || 'http://129.40.90.163:8002/upload-files';
         
@@ -176,7 +318,8 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser, loadingUserD
             'Accept': 'text/event-stream',
             'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
-          }
+          },
+          signal: controller.signal // Add abort signal
         });
 
         if (!response.ok) {
@@ -238,7 +381,7 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser, loadingUserD
                     }
                     setStreamingStatus(prev => ({ 
                       ...prev, 
-                      [tempDocId]: 'summarizing...' 
+                      [tempDocId]: 'Summarizing...' 
                     }));
                     setStreamingProgress(prev => ({ ...prev, [tempDocId]: 50 }));
                   }
@@ -355,44 +498,57 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser, loadingUserD
           
           if (isComplete) break;
         }
-      } catch (error) {
-        console.error('Streaming error:', error);
-        setStreamingDocuments(prev => ({
-          ...prev,
-          [tempDocId]: { 
-            ...prev[tempDocId], 
+      } 
+        // Check if error is due to abort
+        catch (error) {
+  // Check if error is due to abort
+  if (error.name === 'AbortError') {
+    console.log('Streaming aborted by user');
+    // Don't set error status here - the stopStreaming function will handle it
+    // Just clean up
+    const updatedUploadingFiles = new Set(uploadingFiles);
+    updatedUploadingFiles.delete(file.name);
+    setUploadingFiles(updatedUploadingFiles);
+  } else {
+    console.error('Streaming error:', error);
+          console.error('Streaming error:', error);
+          setStreamingDocuments(prev => ({
+            ...prev,
+            [tempDocId]: { 
+              ...prev[tempDocId], 
+              status: 'error',
+              error: error.message
+            }
+          }));
+          setStreamingError(prev => ({ ...prev, [tempDocId]: error.message }));
+          setStreamingStatus(prev => ({
+            ...prev,
+            [tempDocId]: '✗ Error: ' + error.message
+          }));
+          setStreamingProgress(prev => ({ ...prev, [tempDocId]: 0 }));
+          addActivity(file.name, 'upload failed', null, 'error');
+          
+          // Create error document
+          const errorDoc = {
+            id: `doc_${Date.now()}_${Math.random()}`,
+            name: file.name,
+            size: file.size,
+            uploadedAt: new Date(),
             status: 'error',
+            summary: `Failed to process document: ${error.message}`,
+            extractedInfo: '',
+            file: file,
+            processingTime: null,
+            apiResponse: [],
             error: error.message
-          }
-        }));
-        setStreamingError(prev => ({ ...prev, [tempDocId]: error.message }));
-        setStreamingStatus(prev => ({
-          ...prev,
-          [tempDocId]: '✗ Error: ' + error.message
-        }));
-        setStreamingProgress(prev => ({ ...prev, [tempDocId]: 0 }));
-        addActivity(file.name, 'upload failed', null, 'error');
-        
-        // Create error document
-        const errorDoc = {
-          id: `doc_${Date.now()}_${Math.random()}`,
-          name: file.name,
-          size: file.size,
-          uploadedAt: new Date(),
-          status: 'error',
-          summary: `Failed to process document: ${error.message}`,
-          extractedInfo: '',
-          file: file,
-          processingTime: null,
-          apiResponse: [],
-          error: error.message
-        };
+          };
 
-        if (onUpload) {
-          await onUpload([], errorDoc);
+          if (onUpload) {
+            await onUpload([], errorDoc);
+          }
         }
 
-        // Auto-close modal after error
+        // Auto-close modal after error/abort
         setTimeout(() => {
           if (activeStreamingDoc === tempDocId) {
             closeStreamingModal();
@@ -403,6 +559,49 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser, loadingUserD
         const updatedUploadingFiles = new Set(uploadingFiles);
         updatedUploadingFiles.delete(file.name);
         setUploadingFiles(updatedUploadingFiles);
+        
+        // Remove controller
+        setStreamingControllers(prev => {
+          const newControllers = { ...prev };
+          delete newControllers[tempDocId];
+          return newControllers;
+        });
+      }
+    }
+  };
+
+  // Enhanced delete handler with server API call
+  const handleDelete = async (docId, docName) => {
+    const confirmDelete = window.confirm(`Are you sure you want to delete "${docName}"?`);
+    
+    if (confirmDelete) {
+      try {
+        // Call the onDelete prop first (handles local state)
+        if (onDelete) {
+          onDelete(docId);
+        }
+
+        // Call server API to delete file
+        //const deleteUrl = `http://129.40.90.163:8002/delete-files?user_id=${currentUser.username}&filename=${encodeURIComponent(docName)}`;
+        const apiUrl = process.env.REACT_APP_API_BASE_URL
+
+        const response = await fetch(`${apiUrl}/delete-file?user_id=${currentUser.username}&filename=${encodeURIComponent(docName)}`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+          }
+        });
+
+        if (response.ok) {
+          console.log(`File ${docName} deleted successfully from server`);
+          addActivity(docName, 'deleted from server', null, 'completed');
+        } else {
+          console.error(`Failed to delete file ${docName} from server`);
+          addActivity(docName, 'server deletion failed', null, 'error');
+        }
+      } catch (error) {
+        console.error('Error deleting file from server:', error);
+        addActivity(docName, 'server deletion error', null, 'error');
       }
     }
   };
@@ -420,11 +619,15 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser, loadingUserD
   };
 
   const closeStreamingModal = () => {
+    // Abort any ongoing streaming
+    if (activeStreamingDoc && streamingControllers[activeStreamingDoc]) {
+      streamingControllers[activeStreamingDoc].abort();
+    }
+    
     setStreamingModalOpen(false);
     
     // If there's a completed streaming document, ensure it's in the list
     if (activeStreamingDoc && streamingDocuments[activeStreamingDoc]?.status === 'complete') {
-      // The document should already be added via onUpload callback
       console.log('Document processing complete, added to recent documents');
     }
     
@@ -489,27 +692,28 @@ const DocumentsTab = ({ documents, onUpload, onDelete, currentUser, loadingUserD
     setSelectedDocForDetails(mainDoc);
     closeStreamingModal();
   };
+
   // Add a new useEffect to handle auto-scrolling when summary updates
-useEffect(() => {
-  if (activeStreamingDoc && streamingSummaries[activeStreamingDoc]) {
-    // Wait for the DOM to update, then scroll to bottom
-    setTimeout(() => {
-      const summaryContainer = document.querySelector('.summary-container');
-      if (summaryContainer) {
-        summaryContainer.scrollTop = summaryContainer.scrollHeight;
-      }
-    }, 50);
-  }
-}, [streamingSummaries, activeStreamingDoc]);
+  useEffect(() => {
+    if (activeStreamingDoc && streamingSummaries[activeStreamingDoc]) {
+      setTimeout(() => {
+        const summaryContainer = document.querySelector('.summary-container');
+        if (summaryContainer) {
+          summaryContainer.scrollTop = summaryContainer.scrollHeight;
+        }
+      }, 50);
+    }
+  }, [streamingSummaries, activeStreamingDoc]);
+
   useEffect(() => {
     if (currentUser?.username) {
-      // Check if we need to fetch documents (they might already be passed from Dashboard)
       const hasServerDocs = documents.some(doc => doc.fromServer);
       if (!hasServerDocs) {
         // Optionally fetch here too for redundancy
       }
     }
   }, [currentUser?.username]);
+
   useEffect(() => {
     // Check if any streaming document is complete and update documents
     if (activeStreamingDoc && streamingDocuments[activeStreamingDoc]?.status === 'complete') {
@@ -517,14 +721,12 @@ useEffect(() => {
       const summary = streamingSummaries[activeStreamingDoc];
       const content = documentContent[activeStreamingDoc] || streamingContent[activeStreamingDoc];
       
-      // Check if this document is already in the documents list
       const isAlreadyAdded = documents.some(doc => 
         doc.name === streamingDoc.name && 
         Math.abs(new Date(doc.uploadedAt).getTime() - new Date().getTime()) < 5000
       );
       
       if (!isAlreadyAdded && summary && onUpload) {
-        // Create final document object
         const finalDoc = {
           id: Date.now() + Math.random(),
           name: streamingDoc.name,
@@ -541,7 +743,6 @@ useEffect(() => {
           }]
         };
         
-        // Add to documents via onUpload
         onUpload([], finalDoc);
       }
     }
@@ -583,6 +784,8 @@ useEffect(() => {
     setStreamingProgress({});
     setDocumentContent({});
     setStreamingError({});
+    setStreamingControllers({});
+    setIsStopping(false);
 
     if (previewUrl) {
       URL.revokeObjectURL(previewUrl);
@@ -809,9 +1012,20 @@ useEffect(() => {
         .summary-container::-webkit-scrollbar-thumb:hover {
           background: #0353e9;
         }
+        .stop-button {
+          background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
+          color: white !important;
+          border: none !important;
+          transition: all 0.2s !important;
+        }
+        .stop-button:hover {
+          background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%) !important;
+          transform: translateY(-2px);
+          box-shadow: 0 4px 8px rgba(239, 68, 68, 0.3) !important;
+        }
       `}</style>
 
-      {/* LIVE STREAMING MODAL - Updated to show real summary chunks */}
+      {/* LIVE STREAMING MODAL - Updated with stop button */}
       {streamingModalOpen && activeStreamingDoc && streamingDocuments[activeStreamingDoc] && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
@@ -825,7 +1039,7 @@ useEffect(() => {
             boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)', animation: 'slideUp 0.3s ease-out'
           }} onClick={(e) => e.stopPropagation()}>
             
-            {/* Header */}
+            {/* Header with stop button */}
             <div style={{
               padding: '2rem', borderBottom: '1px solid #e5e7eb',
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -839,14 +1053,22 @@ useEffect(() => {
                     ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
                     : streamingDocuments[activeStreamingDoc].status === 'error'
                     ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'
+                    : streamingDocuments[activeStreamingDoc].status === 'stopped'
+                    ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
                     : 'linear-gradient(135deg, #0f62fe 0%, #0353e9 100%)',
                   borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  boxShadow: '0 4px 6px rgba(15, 98, 254, 0.2)'
+                  boxShadow: streamingDocuments[activeStreamingDoc].status === 'error' 
+                    ? '0 4px 6px rgba(239, 68, 68, 0.2)'
+                    : streamingDocuments[activeStreamingDoc].status === 'stopped'
+                    ? '0 4px 6px rgba(245, 158, 11, 0.2)'
+                    : '0 4px 6px rgba(15, 98, 254, 0.2)'
                 }}>
                   {streamingDocuments[activeStreamingDoc].status === 'complete' ? (
                     <Checkmark size={24} style={{ color: 'white' }} />
                   ) : streamingDocuments[activeStreamingDoc].status === 'error' ? (
                     <Error size={24} style={{ color: 'white' }} />
+                  ) : streamingDocuments[activeStreamingDoc].status === 'stopped' ? (
+                    <StopFilled size={24} style={{ color: 'white' }} />
                   ) : (
                     <div className="spinner">
                       <span style={{ width: '20px', height: '20px', color: 'white' }}><Icons.RedHat/></span>
@@ -855,29 +1077,65 @@ useEffect(() => {
                 </div>
                 <div>
                   <h2 style={{ color: '#111827', fontSize: '1.25rem', fontWeight: 600, margin: 0, lineHeight: 1.3 }}>
-                    {streamingDocuments[activeStreamingDoc].status === 'error' ? 'Processing Failed' : `Processing: ${streamingDocuments[activeStreamingDoc].name}`}
+                    {streamingDocuments[activeStreamingDoc].status === 'error' ? 'Processing Failed' : 
+                     streamingDocuments[activeStreamingDoc].status === 'stopped' ? 'Processing Stopped' : 
+                     `Processing: ${streamingDocuments[activeStreamingDoc].name}`}
                   </h2>
-                  <p style={{ color: streamingDocuments[activeStreamingDoc].status === 'error' ? '#dc2626' : '#6b7280', fontSize: '0.875rem', margin: '0.25rem 0 0 0' }}>
+                  <p style={{ 
+                    color: streamingDocuments[activeStreamingDoc].status === 'error' ? '#dc2626' : 
+                           streamingDocuments[activeStreamingDoc].status === 'stopped' ? '#d97706' : 
+                           '#6b7280', 
+                    fontSize: '0.875rem', margin: '0.25rem 0 0 0' 
+                  }}>
                     {streamingStatus[activeStreamingDoc] || 'Initializing...'}
                   </p>
                 </div>
               </div>
               
-              <button onClick={closeStreamingModal} style={{
-                background: 'transparent', border: 'none', cursor: 'pointer', padding: '0.5rem',
-                borderRadius: '6px', color: '#525252', fontSize: '1.5rem',
-                width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                '&:hover': { backgroundColor: '#f3f4f6' }
-              }}>
-                <Close size={24} />
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                {/* Stop button - only show if processing is ongoing */}
+                {streamingDocuments[activeStreamingDoc].status === 'uploading' || 
+                 streamingDocuments[activeStreamingDoc].status === 'processing' || 
+                 streamingDocuments[activeStreamingDoc].status === 'summarizing' ? (
+                  <button 
+                    onClick={() => stopStreaming(activeStreamingDoc)}
+                    disabled={isStopping}
+                    className="stop-button"
+                    style={{
+                      padding: '0.75rem 1.5rem',
+                      borderRadius: '8px',
+                      cursor: isStopping ? 'not-allowed' : 'pointer',
+                      fontSize: '0.875rem',
+                      fontWeight: 600,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      opacity: isStopping ? 0.7 : 1
+                    }}
+                  >
+                    <StopFilled size={16} />
+                    {isStopping ? 'Stopping...' : 'Stop streaming'}
+                  </button>
+                ) : null}
+                
+                <button onClick={closeStreamingModal} style={{
+                  background: 'transparent', border: 'none', cursor: 'pointer', padding: '0.5rem',
+                  borderRadius: '6px', color: '#525252', fontSize: '1.5rem',
+                  width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  '&:hover': { backgroundColor: '#f3f4f6' }
+                }}>
+                  <Close size={24} />
+                </button>
+              </div>
             </div>
 
             {/* Content */}
             <div style={{ padding: '2rem', overflowY: 'auto', flex: 1 }}>
               
-              {/* Progress Bar - Only show if not error */}
-              {streamingDocuments[activeStreamingDoc].status !== 'complete' && streamingDocuments[activeStreamingDoc].status !== 'error' && (
+              {/* Progress Bar - Only show if not error/stopped/complete */}
+              {streamingDocuments[activeStreamingDoc].status !== 'complete' && 
+               streamingDocuments[activeStreamingDoc].status !== 'error' &&
+               streamingDocuments[activeStreamingDoc].status !== 'stopped' && (
                 <div style={{ marginBottom: '2rem', padding: '1.5rem', background: '#f9fafb', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
                     <span className="spinner" style={{ width: '20px', height: '20px', color: '#0f62fe' }}><Icons.Sparkles /></span>
@@ -912,130 +1170,144 @@ useEffect(() => {
                   <p style={{ color: '#7f1d1d', fontSize: '0.9375rem', margin: 0, lineHeight: '1.6' }}>
                     {streamingError[activeStreamingDoc] || 'An error occurred while processing the document. Please try again.'}
                   </p>
-                  <p style={{ color: '#991b1b', fontSize: '0.875rem', margin: '1rem 0 0 0', fontStyle: 'italic' }}>
-                    The streaming modal will close automatically in a few seconds...
-                  </p>
                 </div>
               )}
 
-              {/* Live Summary - Now shows actual summary chunks from stream */}
-             {streamingSummaries[activeStreamingDoc] && streamingDocuments[activeStreamingDoc].status !== 'error' && (
-  <div style={{ marginBottom: '2rem' }}>
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: '0.5rem',
-      marginBottom: '1rem'
-    }}>
-      <span style={{ width: '20px', height: '20px', color: '#0f62fe' }}>
-        <Icons.Sparkles />
-      </span>
-      <h3 style={{
-        color: '#111827',
-        fontSize: '1.125rem',
-        fontWeight: 600,
-        margin: 0
-      }}>
-        AI-Generated Summary
-        {streamingDocuments[activeStreamingDoc].status !== 'complete' && (
-          <span className="streaming-text" style={{ color: '#0f62fe', fontSize: '0.875rem', fontWeight: 400, marginLeft: '0.5rem' }}>
-            (streaming live...)
-          </span>
-        )}
+              {/* Stopped Display */}
+    {streamingDocuments[activeStreamingDoc]?.status === 'error' && 
+ streamingDocuments[activeStreamingDoc]?.error === 'Processing stopped before any data was received' && (
+  <div style={{ marginBottom: '2rem', padding: '1.5rem', background: '#fffbeb', borderRadius: '12px', border: '2px solid #fde68a' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+      <StopFilled size={20} style={{ color: '#d97706' }} />
+      <h3 style={{ color: '#92400e', fontSize: '1.125rem', fontWeight: 600, margin: 0 }}>
+        Processing Stopped
       </h3>
     </div>
-
-    <div style={{
-      padding: '1.5rem',
-      background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
-      border: '2px solid #bfdbfe',
-      borderRadius: '12px',
-      position: 'relative',
-      overflow: 'hidden',
-      boxShadow: '0 2px 8px rgba(15, 98, 254, 0.1)',
-      maxHeight: '400px', // Reduced from 400px for better UX
-      display: 'flex',
-      flexDirection: 'column'
-    }}>
-      <div style={{
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        width: '4px',
-        height: '100%',
-        background: 'linear-gradient(to bottom, #0f62fe, #0353e9)'
-      }} />
-      
-      {/* Auto-scrolling summary container */}
-      <div 
-        className="summary-container"
-        ref={(el) => {
-          // Auto-scroll to bottom when content updates
-          if (el && streamingSummaries[activeStreamingDoc]) {
-            setTimeout(() => {
-              el.scrollTop = el.scrollHeight;
-            }, 0);
-          }
-        }}
-        style={{
-          flex: 1,
-          overflowY: 'auto',
-          paddingRight: '10px',
-          maxHeight: '400px' // Fixed height for consistent scrolling
-        }}
-      >
-        <div 
-          id={`summary-content-${activeStreamingDoc}`}
-          style={{
-            color: '#1e3a8a',
-            fontSize: '0.9375rem',
-            lineHeight: '1.8',
-            whiteSpace: 'pre-wrap',
-            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-            minHeight: '50px',
-            paddingBottom: '10px' // Add padding at bottom
-          }}
-        >
-          {streamingSummaries[activeStreamingDoc]}
-          {streamingDocuments[activeStreamingDoc].status !== 'complete' && (
-            <span 
-              className="streaming-text" 
-              style={{ 
-                display: 'inline-block', 
-                width: '8px', 
-                height: '16px', 
-                background: '#0f62fe', 
-                marginLeft: '2px', 
-                verticalAlign: 'middle',
-                animation: 'pulse 1.5s ease-in-out infinite'
-              }} 
-            />
-          )}
-        </div>
-      </div>
-      
-      <div style={{ 
-        marginTop: '1rem', 
-        display: 'flex', 
-        alignItems: 'center', 
-        gap: '0.5rem', 
-        color: '#6b7280', 
-        fontSize: '0.75rem',
-        paddingTop: '0.5rem',
-        borderTop: '1px solid rgba(191, 219, 254, 0.5)'
-      }}>
-        <span style={{ width: '12px', height: '12px' }}><Icons.FileText /></span>
-        <span>{streamingSummaries[activeStreamingDoc].length} characters generated</span>
-        <span style={{ marginLeft: 'auto', color: '#0f62fe', fontWeight: '600' }}>
-          {streamingDocuments[activeStreamingDoc].status === 'complete' ? '✓ Complete' : '⌛ Streaming...'}
-        </span>
-      </div>
-    </div>
+    <p style={{ color: '#92400e', fontSize: '0.9375rem', margin: 0, lineHeight: '1.6' }}>
+      Processing was stopped before any data was received. No document was saved.
+    </p>
   </div>
 )}
+              {/* Live Summary */}
+              {streamingSummaries[activeStreamingDoc] && 
+               streamingDocuments[activeStreamingDoc].status !== 'error' &&
+               streamingDocuments[activeStreamingDoc].status !== 'stopped' && (
+                <div style={{ marginBottom: '2rem' }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    marginBottom: '1rem'
+                  }}>
+                    <span style={{ width: '20px', height: '20px', color: '#0f62fe' }}>
+                      <Icons.Sparkles />
+                    </span>
+                    <h3 style={{
+                      color: '#111827',
+                      fontSize: '1.125rem',
+                      fontWeight: 600,
+                      margin: 0
+                    }}>
+                      AI-Generated Summary
+                      {streamingDocuments[activeStreamingDoc].status !== 'complete' && (
+                        <span className="streaming-text" style={{ color: '#0f62fe', fontSize: '0.875rem', fontWeight: 400, marginLeft: '0.5rem' }}>
+                          (streaming live...)
+                        </span>
+                      )}
+                    </h3>
+                  </div>
 
-              {/* Extracted Content - Now shows actual document content */}
-              {documentContent[activeStreamingDoc] && streamingDocuments[activeStreamingDoc].status !== 'error' && (
+                  <div style={{
+                    padding: '1.5rem',
+                    background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+                    border: '2px solid #bfdbfe',
+                    borderRadius: '12px',
+                    position: 'relative',
+                    overflow: 'hidden',
+                    boxShadow: '0 2px 8px rgba(15, 98, 254, 0.1)',
+                    maxHeight: '400px',
+                    display: 'flex',
+                    flexDirection: 'column'
+                  }}>
+                    <div style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '4px',
+                      height: '100%',
+                      background: 'linear-gradient(to bottom, #0f62fe, #0353e9)'
+                    }} />
+                    
+                    <div 
+                      className="summary-container"
+                      ref={(el) => {
+                        if (el && streamingSummaries[activeStreamingDoc]) {
+                          setTimeout(() => {
+                            el.scrollTop = el.scrollHeight;
+                          }, 0);
+                        }
+                      }}
+                      style={{
+                        flex: 1,
+                        overflowY: 'auto',
+                        paddingRight: '10px',
+                        maxHeight: '400px'
+                      }}
+                    >
+                      <div 
+                        id={`summary-content-${activeStreamingDoc}`}
+                        style={{
+                          color: '#1e3a8a',
+                          fontSize: '0.9375rem',
+                          lineHeight: '1.8',
+                          whiteSpace: 'pre-wrap',
+                          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+                          minHeight: '50px',
+                          paddingBottom: '10px'
+                        }}
+                      >
+                        {streamingSummaries[activeStreamingDoc]}
+                        {streamingDocuments[activeStreamingDoc].status !== 'complete' && (
+                          <span 
+                            className="streaming-text" 
+                            style={{ 
+                              display: 'inline-block', 
+                              width: '8px', 
+                              height: '16px', 
+                              background: '#0f62fe', 
+                              marginLeft: '2px', 
+                              verticalAlign: 'middle',
+                              animation: 'pulse 1.5s ease-in-out infinite'
+                            }} 
+                          />
+                        )}
+                      </div>
+                    </div>
+                    
+                    <div style={{ 
+                      marginTop: '1rem', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: '0.5rem', 
+                      color: '#6b7280', 
+                      fontSize: '0.75rem',
+                      paddingTop: '0.5rem',
+                      borderTop: '1px solid rgba(191, 219, 254, 0.5)'
+                    }}>
+                      <span style={{ width: '12px', height: '12px' }}><Icons.FileText /></span>
+                      <span>{streamingSummaries[activeStreamingDoc].length} characters generated</span>
+                      <span style={{ marginLeft: 'auto', color: '#0f62fe', fontWeight: '600' }}>
+                        {streamingDocuments[activeStreamingDoc].status === 'complete' ? '✓ Complete' : '⌛ Streaming...'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Extracted Content */}
+              {documentContent[activeStreamingDoc] && 
+               streamingDocuments[activeStreamingDoc].status !== 'error' &&
+               streamingDocuments[activeStreamingDoc].status !== 'stopped' && (
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
                     <DataBase size={18} style={{ color: '#0f62fe' }} />
@@ -1126,9 +1398,11 @@ useEffect(() => {
                     </button>
                   </div>
                 </>
-              ) : streamingDocuments[activeStreamingDoc]?.status === 'error' ? (
+              ) : streamingDocuments[activeStreamingDoc]?.status === 'error' || 
+                streamingDocuments[activeStreamingDoc]?.status === 'stopped' ? (
                 <button onClick={closeStreamingModal} style={{
-                  background: '#ef4444', color: 'white', border: 'none',
+                  background: streamingDocuments[activeStreamingDoc]?.status === 'error' ? '#ef4444' : '#f59e0b',
+                  color: 'white', border: 'none',
                   padding: '0.75rem 2rem', borderRadius: '8px', cursor: 'pointer',
                   fontSize: '0.9375rem', fontWeight: 600, display: 'flex',
                   alignItems: 'center', gap: '0.5rem'
@@ -1146,7 +1420,7 @@ useEffect(() => {
         </div>
       )}
       
-      {/* Rest of the component remains the same */}
+      {/* Rest of the component with updated delete button */}
       <div style={{ display: 'flex', gap: '1.5rem', padding: '2rem', margin: '0 auto' }}>
         {/* Left Column - Upload and Documents */}
         <div style={{ flex: 1 }}>
@@ -1277,84 +1551,84 @@ useEffect(() => {
           </div>
 
           {/* Recent Documents */}
-           <Tile style={{
-        background: 'white',
-        border: '1px solid #e0e0e0',
-        borderRadius: '8px',
-        padding: '1rem',
-        margin: 0,
-        flex: 1,
-        overflow: 'hidden',
-        display: 'flex',
-        flexDirection: 'column'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
-          <div style={{
-            width: '40px',
-            height: '40px',
-            background: '#0f62fe',
+          <Tile style={{
+            background: 'white',
+            border: '1px solid #e0e0e0',
             borderRadius: '8px',
+            padding: '1rem',
+            margin: 0,
+            flex: 1,
+            overflow: 'hidden',
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
+            flexDirection: 'column'
           }}>
-            <span style={{ width: '20px', height: '20px', color: 'white' }}><Icons.Clock /></span>
-          </div>
-          <div>
-            <p style={{ color: '#161616', fontWeight: 500, fontSize: '1rem', margin: 0 }}>Recent Documents</p>
-            <p style={{ color: '#525252', fontSize: '0.875rem', margin: 0 }}>
-              {loadingUserDocuments ? 'Loading...' : `${documents.length} document${documents.length !== 1 ? 's' : ''}`}
-            </p>
-          </div>
-        </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+              <div style={{
+                width: '40px',
+                height: '40px',
+                background: '#0f62fe',
+                borderRadius: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <span style={{ width: '20px', height: '20px', color: 'white' }}><Icons.Clock /></span>
+              </div>
+              <div>
+                <p style={{ color: '#161616', fontWeight: 500, fontSize: '1rem', margin: 0 }}>Recent Documents</p>
+                <p style={{ color: '#525252', fontSize: '0.875rem', margin: 0 }}>
+                  {loadingUserDocuments ? 'Loading...' : `${documents.length} document${documents.length !== 1 ? 's' : ''}`}
+                </p>
+              </div>
+            </div>
 
-        {loadingUserDocuments ? (
-          <div style={{
-            textAlign: 'center',
-            padding: '3rem',
-            background: '#fafafa',
-            borderRadius: '8px',
-            border: '2px dashed #e0e0e0',
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center',
-            alignItems: 'center'
-          }}>
-            <div style={{
-              width: '48px',
-              height: '48px',
-              border: '3px solid #0f62fe',
-              borderTopColor: 'transparent',
-              borderRadius: '50%',
-              animation: 'spin 1s linear infinite',
-              marginBottom: '1rem'
-            }} />
-            <p style={{ color: '#161616', marginBottom: '0.5rem', fontWeight: 500 }}>
-              Loading your documents...
-            </p>
-            <p style={{ color: '#525252', fontSize: '0.875rem' }}>
-              Fetching documents from server storage
-            </p>
-          </div>
-        ) : documents.length === 0 ? (
-          <div style={{
-            textAlign: 'center',
-            padding: '2rem',
-            background: '#fafafa',
-            borderRadius: '8px',
-            border: '2px dashed #e0e0e0',
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center',
-            alignItems: 'center'
-          }}>
-            <div style={{ width: '48px', height: '48px', color: '#c6c6c6', margin: '0 auto 1rem' }}><Icons.FileText /></div>
-            <p style={{ color: '#161616', marginBottom: '0.5rem', fontWeight: 500 }}>No documents yet</p>
-            <p style={{ color: '#525252', fontSize: '0.875rem' }}>Upload your first document to get started</p>
-          </div>
-        ) : (
+            {loadingUserDocuments ? (
+              <div style={{
+                textAlign: 'center',
+                padding: '3rem',
+                background: '#fafafa',
+                borderRadius: '8px',
+                border: '2px dashed #e0e0e0',
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                alignItems: 'center'
+              }}>
+                <div style={{
+                  width: '48px',
+                  height: '48px',
+                  border: '3px solid #0f62fe',
+                  borderTopColor: 'transparent',
+                  borderRadius: '50%',
+                  animation: 'spin 1s linear infinite',
+                  marginBottom: '1rem'
+                }} />
+                <p style={{ color: '#161616', marginBottom: '0.5rem', fontWeight: 500 }}>
+                  Loading your documents...
+                </p>
+                <p style={{ color: '#525252', fontSize: '0.875rem' }}>
+                  Fetching documents from server storage
+                </p>
+              </div>
+            ) : documents.length === 0 ? (
+              <div style={{
+                textAlign: 'center',
+                padding: '2rem',
+                background: '#fafafa',
+                borderRadius: '8px',
+                border: '2px dashed #e0e0e0',
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                alignItems: 'center'
+              }}>
+                <div style={{ width: '48px', height: '48px', color: '#c6c6c6', margin: '0 auto 1rem' }}><Icons.FileText /></div>
+                <p style={{ color: '#161616', marginBottom: '0.5rem', fontWeight: 500 }}>No documents yet</p>
+                <p style={{ color: '#525252', fontSize: '0.875rem' }}>Upload your first document to get started</p>
+              </div>
+            ) : (
 
               <div style={{
                 flex: 1,
@@ -1364,107 +1638,107 @@ useEffect(() => {
                 gap: '0.75rem'
               }}>
                 <Stack gap={5}>
-                    {documents.map((doc) => {
-    const processingTime = getDocumentProcessingTime(doc);
-    const isServerDocument = doc.fromServer;
-    
-    return (
-      <Tile key={doc.id} style={{
-        background: 'white',
-        border: '1px solid #e0e0e0',
-        borderRadius: '8px',
-        padding: '1rem',
-        margin: 0,
-        position: 'relative'
-      }}>
-        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
-          <div style={{
-            width: '48px',
-            height: '48px',
-            background: isServerDocument ? '#e0e7ff' : '#f4f4f4',
-            border: isServerDocument ? '2px solid #0f62fe' : '1px solid #e0e0e0',
-            borderRadius: '8px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-            position: 'relative'
-          }}>
-            <Document size={20} style={{ 
-              color: doc.status === 'error' ? '#ef4444' : 
-                     isServerDocument ? '#0f62fe' : '#da1e28' 
-            }} />
-            {isServerDocument && (
-              <div style={{
-                position: 'absolute',
-                top: -5,
-                right: -5,
-                background: '#0f62fe',
-                color: 'white',
-                borderRadius: '50%',
-                width: '16px',
-                height: '16px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '10px',
-                fontWeight: 'bold'
-              }}>
-                <span style={{ width: '10px', height: '10px' }}><Icons.Cloud /></span>
-              </div>
-            )}
-          </div>
+                  {documents.map((doc) => {
+                    const processingTime = getDocumentProcessingTime(doc);
+                    const isServerDocument = doc.fromServer;
+                    
+                    return (
+                      <Tile key={doc.id} style={{
+                        background: 'white',
+                        border: '1px solid #e0e0e0',
+                        borderRadius: '8px',
+                        padding: '1rem',
+                        margin: 0,
+                        position: 'relative'
+                      }}>
+                        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
+                          <div style={{
+                            width: '48px',
+                            height: '48px',
+                            background: isServerDocument ? '#e0e7ff' : '#f4f4f4',
+                            border: isServerDocument ? '2px solid #0f62fe' : '1px solid #e0e0e0',
+                            borderRadius: '8px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0,
+                            position: 'relative'
+                          }}>
+                            <Document size={20} style={{ 
+                              color: doc.status === 'error' ? '#ef4444' : 
+                                    isServerDocument ? '#0f62fe' : '#da1e28' 
+                            }} />
+                            {isServerDocument && (
+                              <div style={{
+                                position: 'absolute',
+                                top: -5,
+                                right: -5,
+                                background: '#0f62fe',
+                                color: 'white',
+                                borderRadius: '50%',
+                                width: '16px',
+                                height: '16px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '10px',
+                                fontWeight: 'bold'
+                              }}>
+                                <span style={{ width: '10px', height: '10px' }}><Icons.Cloud /></span>
+                              </div>
+                            )}
+                          </div>
 
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '0.5rem' }}>
-              <div>
-                <h3 style={{
-                  color: '#161616',
-                  margin: 0,
-                  fontSize: '0.875rem',
-                  fontWeight: 500,
-                  wordBreak: 'break-word'
-                }}>
-                  {doc.name}
-                </h3>
-                {isServerDocument && (
-                  <span style={{
-                    fontSize: '0.7rem',
-                    color: '#0f62fe',
-                    background: '#e0e7ff',
-                    padding: '2px 6px',
-                    borderRadius: '10px',
-                    marginTop: '4px',
-                    display: 'inline-block'
-                  }}>
-                    Server Document
-                  </span>
-                )}
-              </div>
-              {doc.status === 'ready' && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  {processingTime && (
-                    <Tag style={{
-                      background: '#e0e7ff',
-                      color: '#3730a3',
-                      borderRadius: '12px',
-                      fontSize: '0.75rem',
-                      fontWeight: 600
-                    }} size="sm">
-                      {processingTime}
-                    </Tag>
-                  )}
-                  <Tag style={{
-                    background: '#d1f0d4',
-                    color: '#24a148',
-                    borderRadius: '12px',
-                    fontSize: '0.75rem',
-                    fontWeight: 600
-                  }} size="sm">
-                    Ready
-                  </Tag>
-                </div>
-              )}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '0.5rem' }}>
+                              <div>
+                                <h3 style={{
+                                  color: '#161616',
+                                  margin: 0,
+                                  fontSize: '0.875rem',
+                                  fontWeight: 500,
+                                  wordBreak: 'break-word'
+                                }}>
+                                  {doc.name}
+                                </h3>
+                                {isServerDocument && (
+                                  <span style={{
+                                    fontSize: '0.7rem',
+                                    color: '#0f62fe',
+                                    background: '#e0e7ff',
+                                    padding: '2px 6px',
+                                    borderRadius: '10px',
+                                    marginTop: '4px',
+                                    display: 'inline-block'
+                                  }}>
+                                    Server Document
+                                  </span>
+                                )}
+                              </div>
+                              {doc.status === 'ready' && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                  {processingTime && (
+                                    <Tag style={{
+                                      background: '#e0e7ff',
+                                      color: '#3730a3',
+                                      borderRadius: '12px',
+                                      fontSize: '0.75rem',
+                                      fontWeight: 600
+                                    }} size="sm">
+                                      {processingTime}
+                                    </Tag>
+                                  )}
+                                  <Tag style={{
+                                    background: '#d1f0d4',
+                                    color: '#24a148',
+                                    borderRadius: '12px',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 600
+                                  }} size="sm">
+                                    Ready
+                                  </Tag>
+                                </div>
+                              )}
                               {doc.status === 'processing' && (
                                 <Tag style={{
                                   color: '#0f62fe',
@@ -1489,27 +1763,27 @@ useEffect(() => {
                               )}
                             </div>
 
-                     <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '1rem',
-              fontSize: '0.75rem',
-              color: '#525252'
-            }}>
-              <span>{doc.size > 0 ? formatFileSize(doc.size) : 'Size unknown'}</span>
-              <span>•</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                <Time size={12} />
-                <span>{formatDate(doc.uploadedAt)}</span>
-              </div>
-              {currentUser && (
-                <>
-                  <span>•</span>
-                  <span>Uploaded by: {doc.uploadedBy || currentUser.username}</span>
-                </>
-              )}
-            </div>
-          </div>
+                            <div style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '1rem',
+                              fontSize: '0.75rem',
+                              color: '#525252'
+                            }}>
+                              <span>{doc.size > 0 ? formatFileSize(doc.size) : 'Size unknown'}</span>
+                              <span>•</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                <Time size={12} />
+                                <span>{formatDate(doc.uploadedAt)}</span>
+                              </div>
+                              {currentUser && (
+                                <>
+                                  <span>•</span>
+                                  <span>Uploaded by: {doc.uploadedBy || currentUser.username}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
                         </div>
 
                         {doc.status === 'ready' && doc.summary && (
@@ -1602,11 +1876,7 @@ useEffect(() => {
                             <Button
                               kind="danger"
                               size="sm"
-                              onClick={() => {
-                                if (window.confirm(`Are you sure you want to delete this failed document "${doc.name}"?`)) {
-                                  onDelete(doc.id);
-                                }
-                              }}
+                              onClick={() => handleDelete(doc.id, doc.name)}
                               renderIcon={TrashCan}
                               style={{
                                 background: '#ef4444',
@@ -1642,14 +1912,11 @@ useEffect(() => {
                           >
                             Preview
                           </Button>
+                          {/* UPDATED DELETE BUTTON - Now calls handleDelete with server API */}
                           <Button
                             kind="danger--tertiary"
                             size="sm"
-                            onClick={() => {
-                              if (window.confirm(`Are you sure you want to delete "${doc.name}"?`)) {
-                                onDelete(doc.id);
-                              }
-                            }}
+                            onClick={() => handleDelete(doc.id, doc.name)}
                             renderIcon={TrashCan}
                             style={{
                               background: 'transparent',
@@ -1919,7 +2186,7 @@ useEffect(() => {
         </div>
       )}
 
-      {/* View Details Modal - Enhanced with Accuracy Assessment */}
+      {/* View Details Modal */}
       {selectedDocForDetails && (
         <div style={{
           position: 'fixed',
@@ -2118,274 +2385,264 @@ useEffect(() => {
                 </div>
               </div>
 
-         {/* AI Summary Section */}
-<div style={{ marginBottom: '2rem' }}>
-  <div style={{
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.5rem',
-    marginBottom: '1rem'
-  }}>
-    <span style={{ width: '20px', height: '20px', color: '#0f62fe' }}>
-      <Icons.Sparkles />
-    </span>
-    <h3 style={{
-      color: '#111827',
-      fontSize: '1.125rem',
-      fontWeight: 600,
-      margin: 0
-    }}>
-      AI-Generated Summary
-    </h3>
-  </div>
+              {/* AI Summary Section */}
+              <div style={{ marginBottom: '2rem' }}>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  marginBottom: '1rem'
+                }}>
+                  <span style={{ width: '20px', height: '20px', color: '#0f62fe' }}>
+                    <Icons.Sparkles />
+                  </span>
+                  <h3 style={{
+                    color: '#111827',
+                    fontSize: '1.125rem',
+                    fontWeight: 600,
+                    margin: 0
+                  }}>
+                    AI-Generated Summary
+                  </h3>
+                </div>
 
-  <div style={{
-    padding: '1.5rem',
-    background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
-    border: '2px solid #bfdbfe',
-    borderRadius: '12px',
-    position: 'relative',
-    overflow: 'hidden',
-    boxShadow: '0 2px 8px rgba(15, 98, 254, 0.1)',
-    maxHeight: '400px',
-    overflowY: 'auto'
-  }}>
-    <div style={{
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      width: '4px',
-      height: '100%',
-      background: 'linear-gradient(to bottom, #0f62fe, #0353e9)'
-    }} />
-    <div style={{
-      color: '#1e3a8a',
-      fontSize: '0.9375rem',
-      lineHeight: '1.8',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-      whiteSpace: 'pre-wrap'
-    }}>
-      {(() => {
-        let summaryText = '';
-        
-        // First try to get from apiResponse
-        if (selectedDocForDetails.apiResponse && selectedDocForDetails.apiResponse.length > 0) {
-          const response = selectedDocForDetails.apiResponse[0];
-          
-          // Try to get from original_summary first
-          if (response.original_summary) {
-            summaryText = response.original_summary;
-          } 
-          // Then try from doc_summary.choices
-          else if (response.doc_summary && response.doc_summary.choices && response.doc_summary.choices.length > 0) {
-            summaryText = response.doc_summary.choices[0].text || '';
-            summaryText = summaryText.replace(/^Summarize the following document:\s*/i, '');
-          } 
-          // Then try direct doc_summary string
-          else if (typeof response.doc_summary === 'string') {
-            summaryText = response.doc_summary;
-          }
-        }
-        
-        // Fallback to document summary field
-        if (!summaryText) {
-          summaryText = selectedDocForDetails.summary || 'No summary available';
-        }
+                <div style={{
+                  padding: '1.5rem',
+                  background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+                  border: '2px solid #bfdbfe',
+                  borderRadius: '12px',
+                  position: 'relative',
+                  overflow: 'hidden',
+                  boxShadow: '0 2px 8px rgba(15, 98, 254, 0.1)',
+                  maxHeight: '400px',
+                  overflowY: 'auto'
+                }}>
+                  <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '4px',
+                    height: '100%',
+                    background: 'linear-gradient(to bottom, #0f62fe, #0353e9)'
+                  }} />
+                  <div style={{
+                    color: '#1e3a8a',
+                    fontSize: '0.9375rem',
+                    lineHeight: '1.8',
+                    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+                    whiteSpace: 'pre-wrap'
+                  }}>
+                    {(() => {
+                      let summaryText = '';
+                      
+                      if (selectedDocForDetails.apiResponse && selectedDocForDetails.apiResponse.length > 0) {
+                        const response = selectedDocForDetails.apiResponse[0];
+                        
+                        if (response.original_summary) {
+                          summaryText = response.original_summary;
+                        } else if (response.doc_summary && response.doc_summary.choices && response.doc_summary.choices.length > 0) {
+                          summaryText = response.doc_summary.choices[0].text || '';
+                          summaryText = summaryText.replace(/^Summarize the following document:\s*/i, '');
+                        } else if (typeof response.doc_summary === 'string') {
+                          summaryText = response.doc_summary;
+                        }
+                      }
+                      
+                      if (!summaryText) {
+                        summaryText = selectedDocForDetails.summary || 'No summary available';
+                      }
 
-        return summaryText.split('\n').map((paragraph, index) => {
-          if (paragraph.trim() === '') {
-            return <div key={index} style={{ height: '0.75rem' }} />;
-          }
+                      return summaryText.split('\n').map((paragraph, index) => {
+                        if (paragraph.trim() === '') {
+                          return <div key={index} style={{ height: '0.75rem' }} />;
+                        }
 
-          if (paragraph.match(/^\d+\.\s+[A-Z]/) || paragraph.match(/^•\s+/)) {
-            return (
-              <div key={index} style={{
-                fontWeight: 600,
-                fontSize: '1rem',
-                color: '#0f62fe',
-                marginTop: index > 0 ? '1.25rem' : '0',
-                marginBottom: '0.5rem'
-              }}>
-                {paragraph}
+                        if (paragraph.match(/^\d+\.\s+[A-Z]/) || paragraph.match(/^•\s+/)) {
+                          return (
+                            <div key={index} style={{
+                              fontWeight: 600,
+                              fontSize: '1rem',
+                              color: '#0f62fe',
+                              marginTop: index > 0 ? '1.25rem' : '0',
+                              marginBottom: '0.5rem'
+                            }}>
+                              {paragraph}
+                            </div>
+                          );
+                        }
+
+                        if (paragraph.trim().startsWith('•') || paragraph.trim().startsWith('-') || paragraph.trim().startsWith('–')) {
+                          return (
+                            <div key={index} style={{
+                              marginLeft: '1.5rem',
+                              marginBottom: '0.5rem',
+                              paddingLeft: '0.75rem',
+                              borderLeft: '3px solid rgba(15, 98, 254, 0.3)',
+                              textAlign: 'justify'
+                            }}>
+                              {paragraph}
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div key={index} style={{
+                            marginBottom: '1rem',
+                            textAlign: 'justify'
+                          }}>
+                            {paragraph}
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
               </div>
-            );
-          }
 
-          if (paragraph.trim().startsWith('•') || paragraph.trim().startsWith('-') || paragraph.trim().startsWith('–')) {
-            return (
-              <div key={index} style={{
-                marginLeft: '1.5rem',
-                marginBottom: '0.5rem',
-                paddingLeft: '0.75rem',
-                borderLeft: '3px solid rgba(15, 98, 254, 0.3)',
-                textAlign: 'justify'
-              }}>
-                {paragraph}
+              {/* Extracted Information */}
+              <div>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  marginBottom: '1rem'
+                }}>
+                  <DataBase size={18} style={{ color: '#0f62fe' }} />
+                  <h3 style={{
+                    color: '#111827',
+                    fontSize: '1.125rem',
+                    fontWeight: 600,
+                    margin: 0
+                  }}>
+                    Extracted Document Content
+                  </h3>
+                </div>
+
+                <div style={{
+                  display: 'flex',
+                  gap: '0.625rem',
+                  marginBottom: '1rem',
+                  flexWrap: 'wrap'
+                }}>
+                  {selectedDocForDetails.apiResponse && selectedDocForDetails.apiResponse.length > 0 && (
+                    <>
+                      <span style={{
+                        background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+                        color: '#1e40af',
+                        padding: '0.5rem 1rem',
+                        borderRadius: '8px',
+                        fontSize: '0.8125rem',
+                        fontWeight: 600,
+                        border: '1px solid #bfdbfe',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.375rem'
+                      }}>
+                        <Document size={14} />
+                        {selectedDocForDetails.apiResponse[0].filename}
+                      </span>
+                      <span style={{
+                        background: '#f3f4f6',
+                        color: '#6b7280',
+                        padding: '0.5rem 1rem',
+                        borderRadius: '8px',
+                        fontSize: '0.8125rem',
+                        fontWeight: 500
+                      }}>
+                        {(selectedDocForDetails.extractedInfo?.length || selectedDocForDetails.apiResponse[0].doc_content?.length || 0).toLocaleString()} characters
+                      </span>
+                    </>
+                  )}
+                </div>
+
+                <div style={{
+                  padding: '1.5rem',
+                  background: 'white',
+                  border: '2px solid #e5e7eb',
+                  borderRadius: '12px',
+                  maxHeight: '500px',
+                  overflowY: 'auto',
+                  boxShadow: 'inset 0 2px 4px rgba(0, 0, 0, 0.05)'
+                }}>
+                  <div style={{
+                    color: '#1f2937',
+                    fontSize: '0.9375rem',
+                    lineHeight: '1.8',
+                    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+                    whiteSpace: 'pre-wrap',
+                    wordWrap: 'break-word'
+                  }}>
+                    {(() => {
+                      let content = selectedDocForDetails.extractedInfo;
+                      
+                      if (!content && selectedDocForDetails.apiResponse && selectedDocForDetails.apiResponse.length > 0) {
+                        content = selectedDocForDetails.apiResponse[0].doc_content;
+                      }
+                      
+                      if (!content) {
+                        content = 'No extracted information available for this document.';
+                      }
+
+                      const contentString = String(content || '');
+
+                      if (!contentString.trim()) {
+                        return (
+                          <div style={{
+                            color: '#6b7280',
+                            fontStyle: 'italic',
+                            textAlign: 'center',
+                            padding: '2rem'
+                          }}>
+                            No content available for this document.
+                          </div>
+                        );
+                      }
+
+                      return contentString.split('\n').map((line, index) => {
+                        if (line.match(/^(Chapter \d+|Introduction|Table \d+|Component|Figure \d+)/i)) {
+                          return (
+                            <div key={index} style={{
+                              fontWeight: 600,
+                              fontSize: '1.0625rem',
+                              color: '#0f62fe',
+                              marginTop: index > 0 ? '1.5rem' : '0',
+                              marginBottom: '0.75rem'
+                            }}>
+                              {line}
+                            </div>
+                          );
+                        }
+
+                        if (line.trim().startsWith('•') || line.trim().startsWith('-')) {
+                          return (
+                            <div key={index} style={{
+                              marginLeft: '1.5rem',
+                              marginBottom: '0.5rem',
+                              paddingLeft: '0.5rem',
+                              borderLeft: '2px solid #e5e7eb'
+                            }}>
+                              {line}
+                            </div>
+                          );
+                        }
+
+                        if (line.trim() === '') {
+                          return <div key={index} style={{ height: '0.75rem' }} />;
+                        }
+
+                        return (
+                          <div key={index} style={{
+                            marginBottom: '0.5rem',
+                            textAlign: 'justify'
+                          }}>
+                            {line}
+                        </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
               </div>
-            );
-          }
-
-          return (
-            <div key={index} style={{
-              marginBottom: '1rem',
-              textAlign: 'justify'
-            }}>
-              {paragraph}
-            </div>
-          );
-        });
-      })()}
-    </div>
-  </div>
-</div>
-
- {/* Extracted Information */}
-<div>
-  <div style={{
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.5rem',
-    marginBottom: '1rem'
-  }}>
-    <DataBase size={18} style={{ color: '#0f62fe' }} />
-    <h3 style={{
-      color: '#111827',
-      fontSize: '1.125rem',
-      fontWeight: 600,
-      margin: 0
-    }}>
-      Extracted Document Content
-    </h3>
-  </div>
-
-  <div style={{
-    display: 'flex',
-    gap: '0.625rem',
-    marginBottom: '1rem',
-    flexWrap: 'wrap'
-  }}>
-    {selectedDocForDetails.apiResponse && selectedDocForDetails.apiResponse.length > 0 && (
-      <>
-        <span style={{
-          background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
-          color: '#1e40af',
-          padding: '0.5rem 1rem',
-          borderRadius: '8px',
-          fontSize: '0.8125rem',
-          fontWeight: 600,
-          border: '1px solid #bfdbfe',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.375rem'
-        }}>
-          <Document size={14} />
-          {selectedDocForDetails.apiResponse[0].filename}
-        </span>
-        <span style={{
-          background: '#f3f4f6',
-          color: '#6b7280',
-          padding: '0.5rem 1rem',
-          borderRadius: '8px',
-          fontSize: '0.8125rem',
-          fontWeight: 500
-        }}>
-          {(selectedDocForDetails.extractedInfo?.length || selectedDocForDetails.apiResponse[0].doc_content?.length || 0).toLocaleString()} characters
-        </span>
-      </>
-    )}
-  </div>
-
-  <div style={{
-    padding: '1.5rem',
-    background: 'white',
-    border: '2px solid #e5e7eb',
-    borderRadius: '12px',
-    maxHeight: '500px',
-    overflowY: 'auto',
-    boxShadow: 'inset 0 2px 4px rgba(0, 0, 0, 0.05)'
-  }}>
-    <div style={{
-      color: '#1f2937',
-      fontSize: '0.9375rem',
-      lineHeight: '1.8',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-      whiteSpace: 'pre-wrap',
-      wordWrap: 'break-word'
-    }}>
-      {(() => {
-        // First try to get from extractedInfo (which should contain doc_content)
-        let content = selectedDocForDetails.extractedInfo;
-        
-        // If not there, try from apiResponse
-        if (!content && selectedDocForDetails.apiResponse && selectedDocForDetails.apiResponse.length > 0) {
-          content = selectedDocForDetails.apiResponse[0].doc_content;
-        }
-        
-        // Final fallback
-        if (!content) {
-          content = 'No extracted information available for this document.';
-        }
-
-        const contentString = String(content || '');
-
-        if (!contentString.trim()) {
-          return (
-            <div style={{
-              color: '#6b7280',
-              fontStyle: 'italic',
-              textAlign: 'center',
-              padding: '2rem'
-            }}>
-              No content available for this document.
-            </div>
-          );
-        }
-
-        return contentString.split('\n').map((line, index) => {
-          if (line.match(/^(Chapter \d+|Introduction|Table \d+|Component|Figure \d+)/i)) {
-            return (
-              <div key={index} style={{
-                fontWeight: 600,
-                fontSize: '1.0625rem',
-                color: '#0f62fe',
-                marginTop: index > 0 ? '1.5rem' : '0',
-                marginBottom: '0.75rem'
-              }}>
-                {line}
-              </div>
-            );
-          }
-
-          if (line.trim().startsWith('•') || line.trim().startsWith('-')) {
-            return (
-              <div key={index} style={{
-                marginLeft: '1.5rem',
-                marginBottom: '0.5rem',
-                paddingLeft: '0.5rem',
-                borderLeft: '2px solid #e5e7eb'
-              }}>
-                {line}
-              </div>
-            );
-          }
-
-          if (line.trim() === '') {
-            return <div key={index} style={{ height: '0.75rem' }} />;
-          }
-
-          return (
-            <div key={index} style={{
-              marginBottom: '0.5rem',
-              textAlign: 'justify'
-            }}>
-              {line}
-            </div>
-          );
-        });
-      })()}
-    </div>
-  </div>
-</div>
             </div>
 
             {/* Modal Footer */}
