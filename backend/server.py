@@ -76,70 +76,68 @@ async def user_exists(user_id:str):
     return check_user_exist(user_id)
 
 
-@app.delete("/delete-files")
-async def delete_files(
+@app.delete("/delete-file")
+async def delete_file(
     user_id: str,
-    filenames: List[str]
+    filename: str
 ):
     """
-    Delete files from both MongoDB and OpenSearch for a specific user
+    Delete a single file from both MongoDB and OpenSearch for a specific user
     
     Args:
         user_id: User identifier
-        filenames: List of filenames to delete
+        filename: Name of the file to delete
     """
     try:
         # Validate input
         if not user_id:
             raise HTTPException(status_code=400, detail="user_id is required")
         
-        if not filenames:
-            raise HTTPException(status_code=400, detail="At least one filename is required")
+        if not filename:
+            raise HTTPException(status_code=400, detail="Filename is required")
         
         # Initialize counters
-        deleted_from_mongo = 0
-        deleted_from_opensearch = 0
+        deleted_from_mongo = False
+        deleted_from_opensearch = False
         errors = []
         
-        # Process each file
-        for filename in filenames:
-            try:
-                # Delete from MongoDB
-                mongo_deleted = await delete_from_mongodb(user_id, filename)
-                if mongo_deleted:
-                    deleted_from_mongo += 1
+        try:
+            # Delete from MongoDB
+            mongo_deleted = await delete_from_mongodb(user_id, filename)
+            if mongo_deleted:
+                deleted_from_mongo = True
+            
+            # Delete from OpenSearch
+            os_deleted = await delete_from_opensearch(user_id, filename)
+            if os_deleted:
+                deleted_from_opensearch = True
                 
-                # Delete from OpenSearch
-                os_deleted = await delete_from_opensearch(user_id, filename)
-                if os_deleted:
-                    deleted_from_opensearch += 1
-                    
-                # If one succeeded but the other failed
-                if mongo_deleted != os_deleted:
-                    errors.append(f"Partial deletion for {filename}: MongoDB={mongo_deleted}, OpenSearch={os_deleted}")
-                    
-            except Exception as e:
-                errors.append(f"Error deleting {filename}: {str(e)}")
+            # If one succeeded but the other failed
+            if mongo_deleted != os_deleted:
+                errors.append(f"Partial deletion: MongoDB={mongo_deleted}, OpenSearch={os_deleted}")
+                
+        except Exception as e:
+            errors.append(f"Error deleting {filename}: {str(e)}")
         
         # Prepare response
         response = {
             "user_id": user_id,
+            "filename": filename,
             "deleted_from_mongodb": deleted_from_mongo,
             "deleted_from_opensearch": deleted_from_opensearch,
-            "total_requested": len(filenames),
             "errors": errors if errors else None
         }
         
         # Check if any were deleted
-        if deleted_from_mongo == 0 and deleted_from_opensearch == 0:
+        if not deleted_from_mongo and not deleted_from_opensearch:
             return {
                 **response,
-                "message": "No files were found to delete. Please check the filenames and user_id."
+                "message": f"File '{filename}' was not found for user '{user_id}'. Please check the filename and user_id."
             }
         
         return {
             **response,
-            "message": f"Successfully deleted {deleted_from_mongo} files from MongoDB and {deleted_from_opensearch} from OpenSearch"
+            "message": f"Successfully deleted '{filename}' for user '{user_id}'"
         }
         
     except HTTPException:
