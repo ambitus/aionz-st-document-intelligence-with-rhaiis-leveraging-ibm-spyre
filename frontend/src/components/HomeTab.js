@@ -459,9 +459,8 @@ const HomePage = ({ documents, onNavigate }) => {
                             {documents.length === 0 ? (
                                 // Placeholder documents
                                 [
-                                    { name: "Financial_Report_Q4_2024.pdf", status: "Sample" },
-                                    { name: "Contract_Agreement_2024.docx", status: "Sample" },
-                                    { name: "Product_Specifications.pdf", status: "Sample" },
+                                    { name: "No documents available." },
+                                 
                                 ].map((doc, index) => (
                                     <div key={index} style={{
                                         display: "flex",
