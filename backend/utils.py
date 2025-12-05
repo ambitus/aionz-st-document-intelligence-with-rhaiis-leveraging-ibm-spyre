@@ -2,6 +2,11 @@ from PyPDF2 import PdfReader
 from docx import Document
 from colorama import Fore, Style, init
 import io
+from config import CHUNK_SIZE, CHUNK_OVERLAP
+
+
+def green_log(message: str):
+    print(Fore.GREEN + message + Style.RESET_ALL)
 
 
 def extract_text_from_pdf(pdf: str) -> str:
@@ -29,5 +34,22 @@ def extract_text_from_doc(doc):
     return text
 
 
-def green_log(message: str):
-    print(Fore.GREEN + message + Style.RESET_ALL)
+def chunk_code(code_text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
+    """
+    Split source code into overlapping line-based chunks.
+
+    Args:
+        code_text (str): Full source code as a single string.
+        size (int): Number of lines per chunk.
+        overlap (int): Number of overlapping lines between consecutive chunks.
+
+    Returns:
+        list[str]: List of code chunks.
+    """
+    lines = code_text.split("\n")
+    chunks = []
+    for i in range(0, len(lines), size - overlap):
+        chunk = "\n".join(lines[i:i + size])
+        if chunk.strip():
+            chunks.append(chunk)
+    return chunks
