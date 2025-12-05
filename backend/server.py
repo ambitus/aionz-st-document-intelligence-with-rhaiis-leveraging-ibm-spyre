@@ -18,6 +18,43 @@ import json
 from typing import AsyncGenerator, Dict, Any
 from collections import defaultdict
 from fastapi import HTTPException
+import urllib.parse
+import re
+import os
+
+# ----------------------------
+# FILENAME NORMALIZATION UTILS
+# ----------------------------
+
+def normalize_filename(filename: str) -> str:
+    """
+    Normalize filenames by URL decoding if encoded and cleaning spaces
+    """
+    if not filename:
+        return filename
+    
+    # URL decode if needed
+    try:
+        if '%' in filename:
+            decoded = urllib.parse.unquote(filename)
+        else:
+            decoded = filename
+    except:
+        decoded = filename
+    
+    # Clean up spaces (replace %20 with space, multiple spaces with single)
+    cleaned = decoded.replace('%20', ' ')
+    cleaned = re.sub(r'\s+', ' ', cleaned)
+    
+    return cleaned.strip()
+
+def sanitize_filename_for_storage(filename: str) -> str:
+    """
+    Sanitize filename for consistent storage in database
+    """
+    normalized = normalize_filename(filename)
+    basename = os.path.basename(normalized)
+    return basename
 
 # ----------------------------
 # API SERVER
@@ -43,18 +80,21 @@ async def upload_files(
     
     docs = []
     for file in files:
-        if file.filename.endswith(".pdf"):
+        # Normalize filename for consistent storage
+        normalized_filename = sanitize_filename_for_storage(file.filename)
+        
+        if normalized_filename.endswith(".pdf"):
             file_content = extract_text_from_pdf(file.file)
-        elif file.filename.endswith(".docx"):
+        elif normalized_filename.endswith(".docx"):
             file_bytes = await file.read()
             file_content = extract_text_from_doc(file_bytes)
-        elif file.filename.endswith(".txt"):
+        elif normalized_filename.endswith(".txt"):
             file_content = file.file.read().decode('utf-8')
         else:
             return {"File not in one of the supported formats (pdf, docx, txt). Please upload a valid file"}
 
         docs.append({
-            "filename": file.filename, 
+            "filename": normalized_filename,  # Store normalized filename
             "text": str(file_content),
             "content": str(file_content)
         })
@@ -83,10 +123,6 @@ async def delete_file(
 ):
     """
     Delete a single file from both MongoDB and OpenSearch for a specific user
-    
-    Args:
-        user_id: User identifier
-        filename: Name of the file to delete
     """
     try:
         # Validate input
@@ -96,19 +132,22 @@ async def delete_file(
         if not filename:
             raise HTTPException(status_code=400, detail="Filename is required")
         
+        # NORMALIZE THE FILENAME
+        normalized_filename = normalize_filename(filename)
+        
         # Initialize counters
         deleted_from_mongo = False
         deleted_from_opensearch = False
         errors = []
         
         try:
-            # Delete from MongoDB
-            mongo_deleted = await delete_from_mongodb(user_id, filename)
+            # Delete from MongoDB using normalized filename
+            mongo_deleted = await delete_from_mongodb(user_id, normalized_filename)
             if mongo_deleted:
                 deleted_from_mongo = True
             
-            # Delete from OpenSearch
-            os_deleted = await delete_from_opensearch(user_id, filename)
+            # Delete from OpenSearch using normalized filename
+            os_deleted = await delete_from_opensearch(user_id, normalized_filename)
             if os_deleted:
                 deleted_from_opensearch = True
                 
@@ -117,12 +156,13 @@ async def delete_file(
                 errors.append(f"Partial deletion: MongoDB={mongo_deleted}, OpenSearch={os_deleted}")
                 
         except Exception as e:
-            errors.append(f"Error deleting {filename}: {str(e)}")
+            errors.append(f"Error deleting {normalized_filename}: {str(e)}")
         
         # Prepare response
         response = {
             "user_id": user_id,
-            "filename": filename,
+            "original_filename": filename,
+            "normalized_filename": normalized_filename,
             "deleted_from_mongodb": deleted_from_mongo,
             "deleted_from_opensearch": deleted_from_opensearch,
             "errors": errors if errors else None
@@ -132,12 +172,12 @@ async def delete_file(
         if not deleted_from_mongo and not deleted_from_opensearch:
             return {
                 **response,
-                "message": f"File '{filename}' was not found for user '{user_id}'. Please check the filename and user_id."
+                "message": f"File '{normalized_filename}' was not found for user '{user_id}'. Please check the filename and user_id."
             }
         
         return {
             **response,
-            "message": f"Successfully deleted '{filename}' for user '{user_id}'"
+            "message": f"Successfully deleted '{normalized_filename}' for user '{user_id}'"
         }
         
     except HTTPException:
@@ -157,7 +197,8 @@ async def ask_query(
     # Parse document names if provided
     selected_docs = None
     if document_names:
-        selected_docs = [doc.strip() for doc in document_names.split(",") if doc.strip()]
+        # Normalize document names if provided
+        selected_docs = [normalize_filename(doc.strip()) for doc in document_names.split(",") if doc.strip()]
     
     # Try retrieval with filters first
     retrieved_chunks = retrieve_with_smart_fallback(
@@ -233,7 +274,7 @@ async def stream_and_process_documents(docs: list, user_id: str) -> AsyncGenerat
             # Combine summary chunks
             full_summary = ''.join(summary_chunks)
             
-            # Store summary with document - make sure we're creating a proper dict
+            # Store summary with document
             doc_with_summary = {
                 "filename": doc["filename"],
                 "text": doc["text"],
@@ -271,7 +312,6 @@ def clean_summary_text(summary: str) -> str:
     if not summary:
         return ""
     
-    # Handle multiple possible prompt formats
     prompts_to_remove = [
         "Summarize the following document:",
         "Document:",
@@ -294,18 +334,6 @@ def is_rhaiis_endpoint_healthy() -> dict:
     url = "http://129.40.90.163:9000/v1/completions"
 
     try:
-        # Lightweight POST with minimal payload
-        # payload = {
-        #     "model": "ibm-granite/granite-3.3-8b-instruct",
-        #     "prompt": "health check",
-        #     "max_tokens": 1,
-        #     "temperature": 0,
-        #     "top_p": 1.0,
-        #     "stream": False
-        # }
-
-        # response = requests.post(url, json=payload, timeout=10)
-
         return {
             "endpoint": url,
             "http_status": 200,
