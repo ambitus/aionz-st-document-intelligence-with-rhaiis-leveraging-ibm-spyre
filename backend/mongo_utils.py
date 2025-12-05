@@ -2,7 +2,6 @@ from datetime import datetime
 from tqdm import tqdm
 from pymongo import MongoClient
 from opensearch_utils import ingest_code_to_os, get_os_connection, create_os_vectorstore
-from rag import summarize
 from config import (
     EMBEDDING_MODEL,
     MONGO_DB_HOST
@@ -103,53 +102,6 @@ def get_or_create_user_collection(mongo_db, user_id: str):
     # Case 4: both exist → normal path
     print(f"[OK] User '{user_id}' exists in both Mongo and OpenSearch.")
     return mongo_db[collection_name]
-
-
-def ingest_document_in_mongodb(docs,user_id):
-    mongo_db = mongo_db_connection()
-
-    # Creating user specific collections
-    collection_name = f"user_{user_id}"
-    collection = get_or_create_user_collection(mongo_db, collection_name)
-
-    doc_summarised=[]
-    for item in tqdm(docs, desc=f"Processing user {user_id}"):
-        doc_name = item["filename"]
-        doc_content = item["text"]
-        existing = collection.find_one({"doc_name":doc_name})
-        if existing:
-            print(f"Skipping duplicate document '{doc_name}' for user '{user_id}'")
-            doc_summarised.append(convert_mongo_doc(existing))
-            continue
-
-        # create the document entry
-        document = {
-            "doc_name": doc_name,
-            "doc_content": doc_content,
-            "uploaded_at": datetime.now().isoformat(),
-        }
-        document.pop("_id", None)
-        # insert document into a particular user collection
-        collection.insert_one(document)
-        ingest_code_to_os(docs, EMBEDDING_MODEL, collection_name)
-        doc_summary = summarize(doc_content)
-        doc_summary_text = doc_summary["choices"][0]["text"].split("Summarize the following document:", 1)[1].strip()
-        
-        scores = scorer.score(doc_content, doc_summary_text)
-        print(scores)
-        collection.update_one(
-            {"doc_name": doc_name},      # filter → find the record
-            {"$set": {                   # update → overwrite only certain fields
-                "doc_summary": doc_summary,
-                "uploaded_at": datetime.now().isoformat(),
-                "Rouge Score": scores
-            }}
-        )
-
-        print(type(doc_summary))
-        print(f"Added summary for document '{doc_name}'")
-        doc_summarised.append({"filename": doc_name, "doc_content": doc_content, "doc_summary":doc_summary})
-    return doc_summarised
 
 
 async def ingest_documents_with_summaries_in_background(

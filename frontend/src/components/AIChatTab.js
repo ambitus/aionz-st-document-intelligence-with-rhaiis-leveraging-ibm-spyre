@@ -6,7 +6,8 @@ import {
   Send,
   Close,
   Copy,
-  TrashCan
+  TrashCan,
+  StopFilled
 } from '@carbon/icons-react';
 import {
   InlineLoading
@@ -155,6 +156,29 @@ const AIChat = ({ documents, currentUser }) => {
     setMessages(prev => prev.filter(msg => msg.id !== messageId));
   };
 
+  // Function to stop streaming response
+  const stopStreaming = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      const stoppedMessage = `[Response stopped by user. Partial response received:] ${messages.find(m => m.id === streamingMessageId)?.content || ''}`;
+      
+      setMessages(prev => prev.map(msg =>
+        msg.id === streamingMessageId
+          ? { 
+              ...msg, 
+              content: stoppedMessage, 
+              isStreaming: false,
+              isStopped: true 
+            }
+          : msg
+      ));
+      
+      setIsLoading(false);
+      setStreamingMessageId(null);
+      abortControllerRef.current = null;
+    }
+  };
+
   // Function to clean response text and format it properly
   const cleanResponseText = (text) => {
     if (!text) return text;
@@ -201,7 +225,7 @@ const AIChat = ({ documents, currentUser }) => {
   };
 
   // Function to render formatted message content with proper line breaks and structure
-  const renderFormattedContent = (content, isStreaming = false) => {
+  const renderFormattedContent = (content, isStreaming = false, isStopped = false) => {
     if (!content) return null;
 
     // Split content by lines and render with proper formatting
@@ -236,10 +260,11 @@ const AIChat = ({ documents, currentUser }) => {
                 marginLeft: isListItem ? '1rem' : '0',
                 fontSize: '0.875rem',
                 fontWeight: isHeading ? '600' : '400',
-                color: '#161616',
+                color: isStopped ? '#8a3b00' : '#161616',
                 lineHeight: '1.6',
                 padding: isHeading ? '0.25rem 0' : '0',
-                wordBreak: 'break-word'
+                wordBreak: 'break-word',
+                opacity: isStopped ? 0.8 : 1
               }}
             >
               {containsUrl ? (
@@ -253,7 +278,7 @@ const AIChat = ({ documents, currentUser }) => {
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{
-                          color: '#0f62fe',
+                          color: isStopped ? '#8a3b00' : '#0f62fe',
                           textDecoration: 'underline'
                         }}
                       >
@@ -269,6 +294,19 @@ const AIChat = ({ documents, currentUser }) => {
             </div>
           );
         })}
+        {isStopped && (
+          <div style={{
+            marginTop: '0.5rem',
+            padding: '0.5rem',
+            background: '#fff8e1',
+            border: '1px solid #ffc107',
+            borderRadius: '4px',
+            fontSize: '0.75rem',
+            color: '#8a3b00'
+          }}>
+            Response was stopped by user
+          </div>
+        )}
       </>
     );
   };
@@ -294,9 +332,9 @@ const AIChat = ({ documents, currentUser }) => {
 
       // formData.append('document_ids', documentIds);
       formData.append('document_names', documentNames);
-      const apiUrl = process.env.REACT_APP_API_BASE_URL  
+
+      const apiUrl = process.env.REACT_APP_API_BASE_URL
       const response = await fetch(`${apiUrl}/ask-query`,{
-       //const response = await fetch('http://129.40.90.163:8002/ask-query', {
         method: 'POST',
         body: formData,
         signal: abortControllerRef.current.signal
@@ -342,7 +380,7 @@ const AIChat = ({ documents, currentUser }) => {
     } catch (error) {
       clearTimeout(timeoutId);
       if (error.name === 'AbortError') {
-        throw new Error('Request timed out after 2 minutes. Showing partial response received so far.');
+        throw new Error('Request was stopped by user.');
       }
       throw error;
     }
@@ -420,7 +458,13 @@ const AIChat = ({ documents, currentUser }) => {
     } catch (error) {
       console.error('Streaming failed:', error);
 
-      // Handle timeout or other errors
+      // Handle abort (user stopped) differently
+      if (error.message === 'Request was stopped by user.') {
+        // Message already updated in stopStreaming function
+        return;
+      }
+
+      // Handle other errors
       if (accumulatedContent) {
         // Show partial response with error notice
         const errorMessage = accumulatedContent + `\n\n[Note: ${error.message}]`;
@@ -526,7 +570,13 @@ const AIChat = ({ documents, currentUser }) => {
     } catch (error) {
       console.error('Streaming failed:', error);
 
-      // Handle timeout or other errors
+      // Handle abort (user stopped) differently
+      if (error.message === 'Request was stopped by user.') {
+        // Message already updated in stopStreaming function
+        return;
+      }
+
+      // Handle other errors
       if (accumulatedContent) {
         // Show partial response with error notice
         const errorMessage = accumulatedContent + `\n\n[Note: ${error.message}]`;
@@ -607,6 +657,39 @@ const AIChat = ({ documents, currentUser }) => {
               </p>
             </div>
           </div>
+
+          {/* Stop Streaming Button - Only shows when streaming is active */}
+          {streamingMessageId && (
+            <button
+              onClick={stopStreaming}
+              style={{
+                position: 'absolute',
+                top: '1.5rem',
+                right: '9rem',
+                background: '#fff1f1',
+                border: '1px solid #ffd7d9',
+                color: '#da1e28',
+                padding: '0.4rem 0.8rem',
+                borderRadius: '6px',
+                fontSize: '0.7rem',
+                fontWeight: 500,
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.25rem'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.background = '#ffd7d9';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.background = '#fff1f1';
+              }}
+            >
+              <StopFilled size={12} />
+              Stop
+            </button>
+          )}
 
           {/* Clear Chat Button */}
           <button
@@ -754,8 +837,8 @@ const AIChat = ({ documents, currentUser }) => {
               {/* Message Content */}
               <div
                 style={{
-                  background: msg.role === 'assistant' ? 'white' : '#edf5ff',
-                  border: `2px solid ${msg.role === 'assistant' ? '#e0e0e0' : '#d0e2ff'}`,
+                  background: msg.isStopped ? '#fff8e1' : msg.role === 'assistant' ? 'white' : '#edf5ff',
+                  border: `2px solid ${msg.isStopped ? '#ffc107' : msg.role === 'assistant' ? '#e0e0e0' : '#d0e2ff'}`,
                   borderRadius: '8px',
                   padding: '1rem',
                   marginLeft: msg.role === 'assistant' ? '0' : '2rem',
@@ -771,7 +854,7 @@ const AIChat = ({ documents, currentUser }) => {
                   minHeight: msg.isStreaming && !msg.content ? '40px' : 'auto'
                 }}>
                   {msg.role === 'assistant' ?
-                    renderFormattedContent(msg.content, msg.isStreaming) :
+                    renderFormattedContent(msg.content, msg.isStreaming, msg.isStopped) :
                     msg.content
                   }
 
@@ -825,7 +908,6 @@ const AIChat = ({ documents, currentUser }) => {
 
                     {/* Delete Button - Don't show for welcome message */}
                     {msg.id !== messages[0]?.id && (
-
                       <button
                         onClick={() => deleteMessage(msg.id)}
                         style={{
