@@ -78,6 +78,7 @@ async def upload_files(
 ):
     """Process files, stream summarization, then background ingestion"""
     
+    user_id= user_id.lower()
     docs = []
     for file in files:
         # Normalize filename for consistent storage
@@ -113,6 +114,7 @@ async def upload_files(
 
 @app.post("/user_exists_check")
 async def user_exists(user_id:str):
+    user_id = user_id.lower()
     return check_user_exist(user_id)
 
 
@@ -124,6 +126,7 @@ async def delete_file(
     """
     Delete a single file from both MongoDB and OpenSearch for a specific user
     """
+    user_id = user_id.lower()
     try:
         # Validate input
         if not user_id:
@@ -192,7 +195,7 @@ async def ask_query(
     user_id: str = Form(...),
     document_names: Optional[str] = Form(None)  # Make optional
 ):
-    collection_name = f"user_{user_id}"
+    collection_name = f"user_{user_id}".lower()
     
     # Parse document names if provided
     selected_docs = None
@@ -237,7 +240,8 @@ def rhaiis_health_check():
 async def stream_and_process_documents(docs: list, user_id: str) -> AsyncGenerator[str, None]:
     """Stream summaries and collect them for background processing"""
     all_summaries = []
-    
+   
+    user_id=user_id.lower()
     try:
         for doc in docs:
             # Send document start marker
