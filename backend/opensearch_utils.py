@@ -119,7 +119,7 @@ async def delete_from_opensearch(user_id: str, filename: str) -> bool:
         client = get_os_connection()
         
         # Index name based on user_id (matching your existing pattern)
-        index_name = f"user_{user_id}"
+        index_name = f"user_{user_id}".lower()
         
         # First, check if the index exists
         if not client.indices.exists(index=index_name):
