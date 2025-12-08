@@ -60,8 +60,8 @@ def get_or_create_user_collection(mongo_db, user_id: str):
       - If neither exists → create both.
     """
 
-    collection_name = user_id
-    os_index_name = user_id  # same naming convention
+    collection_name = user_id.lower()
+    os_index_name = user_id.lower()  # same naming convention
 
     # -------- Mongo check --------
     mongo_exists = collection_name in mongo_db.list_collection_names()
@@ -149,7 +149,7 @@ def ingest_documents_to_mongodb_and_opensearch(docs_with_summaries: list, user_i
         mongo_db = mongo_db_connection()
         
         # Creating user specific collections
-        collection_name = f"user_{user_id}"
+        collection_name = f"user_{user_id}".lower()
         collection = get_or_create_user_collection(mongo_db, collection_name)
         
         for i, doc_data in enumerate(docs_with_summaries):
@@ -243,7 +243,7 @@ async def delete_from_mongodb(user_id: str, filename: str) -> bool:
     try:
         def sync_delete():
             db = mongo_db_connection()
-            collection_name = f"user_{user_id}"
+            collection_name = f"user_{user_id}".lower()
             collection = db[collection_name]
             result = collection.delete_one({"doc_name": filename})
             return result
