@@ -4,7 +4,7 @@ from fastapi.responses import StreamingResponse
 from mongo_utils import check_user_exist, ingest_documents_with_summaries_in_background, delete_from_mongodb
 from opensearch_utils import retrieve_with_smart_fallback, delete_from_opensearch
 from rag import build_rag_prompt
-from rhaiis_utils import call_rhaiis_model, call_rhaiis_model_streaming
+from rhaiis_utils import call_rhaiis_model_streaming
 from utils import extract_text_from_pdf, extract_text_from_doc, green_log
 import subprocess
 import requests
@@ -195,7 +195,8 @@ async def ask_query(
     user_id: str = Form(...),
     document_names: Optional[str] = Form(None)  # Make optional
 ):
-    collection_name = f"user_{user_id}".lower()
+    user_id = user_id.lower()
+    collection_name = f"user_{user_id}"
     
     # Parse document names if provided
     selected_docs = None
@@ -215,11 +216,16 @@ async def ask_query(
     print(f"\nPrompt to send to LLM (from {len(retrieved_chunks)} chunks):\n")
     print(prompt)
 
-    response = call_rhaiis_model(prompt, stream=True)
-
-    if hasattr(response, "__iter__") and not isinstance(response, dict):
-        return StreamingResponse(response, media_type="text/event-stream")
-    return response
+    # Return streaming response using call_rhaiis_model_streaming
+    return StreamingResponse(
+        stream_rhaiis_response(prompt),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 @app.get("/rhaiis/health")
@@ -308,6 +314,29 @@ async def stream_and_process_documents(docs: list, user_id: str) -> AsyncGenerat
     except Exception as e:
         error_msg = json.dumps({"event": "error", "message": str(e)})
         yield f"data: {error_msg}\n\n"
+        print(f"Error in streaming: {e}")
+
+
+async def stream_rhaiis_response(prompt: str) -> AsyncGenerator[str, None]:
+    """Stream RHAIIS response in the same format as call_rhaiis_model with stream=True"""
+    try:
+        response_stream = call_rhaiis_model_streaming(prompt)
+        
+        async for chunk in response_stream:
+            if chunk == "[DONE]":
+                break
+            if chunk.startswith("Error:"):
+                # Send error as JSON
+                error_data = json.dumps({"error": chunk})
+                yield f"data: {error_data}\n\n"
+                break
+            
+            # Send the chunk as plain text (not wrapped in JSON)
+            yield chunk
+            
+    except Exception as e:
+        error_data = json.dumps({"error": str(e)})
+        yield f"data: {error_data}\n\n"
         print(f"Error in streaming: {e}")
 
 
