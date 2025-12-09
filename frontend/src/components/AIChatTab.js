@@ -6,8 +6,7 @@ import {
   Send,
   Close,
   Copy,
-  TrashCan,
-  StopFilled
+  TrashCan
 } from '@carbon/icons-react';
 import {
   InlineLoading
@@ -156,156 +155,38 @@ const AIChat = ({ documents, currentUser }) => {
     setMessages(prev => prev.filter(msg => msg.id !== messageId));
   };
 
-  // Function to stop streaming response
-  const stopStreaming = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      const stoppedMessage = `[Response stopped by user. Partial response received:] ${messages.find(m => m.id === streamingMessageId)?.content || ''}`;
-      
-      setMessages(prev => prev.map(msg =>
-        msg.id === streamingMessageId
-          ? { 
-              ...msg, 
-              content: stoppedMessage, 
-              isStreaming: false,
-              isStopped: true 
-            }
-          : msg
-      ));
-      
-      setIsLoading(false);
-      setStreamingMessageId(null);
-      abortControllerRef.current = null;
-    }
-  };
-
-  // Function to clean response text and format it properly
+  // Function to clean response text - simplified to only remove [DONE] marker
   const cleanResponseText = (text) => {
     if (!text) return text;
-
-    // Remove [DONE] and any trailing special characters
-    let cleaned = text.replace(/\[DONE\]/g, '').trim();
-
-    // Remove any other common streaming artifacts
-    cleaned = cleaned.replace(/\\n/g, '\n');
-
-    // Format URLs to display properly (remove angle brackets)
-    cleaned = cleaned.replace(/<([^>]+)>/g, '$1');
-
-    // Format the text for better readability
-    cleaned = formatTextForReadability(cleaned);
-
-    return cleaned;
+    
+    // Only remove [DONE] marker, keep everything else as-is
+    return text.replace(/\[DONE\]/g, '').trim();
   };
 
-  // Function to format text with proper spacing and structure
-  const formatTextForReadability = (text) => {
-    if (!text) return text;
-
-    // Replace multiple spaces with single space
-    let formatted = text.replace(/\s+/g, ' ');
-
-    // Add proper spacing after sentences
-    formatted = formatted.replace(/([.!?])\s*([A-Z])/g, '$1\n\n$2');
-
-    // Format lists and bullet points
-    formatted = formatted.replace(/(\d+\.)\s*/g, '\n$1 ');
-    formatted = formatted.replace(/[-•*]\s*/g, '\n• ');
-
-    // Format headings or important sections
-    formatted = formatted.replace(/([A-Z][^.!?]*?:)/g, '\n\n$1\n');
-
-    // Ensure proper paragraph spacing
-    formatted = formatted.replace(/\n\s*\n/g, '\n\n');
-
-    // Trim and clean up
-    formatted = formatted.trim();
-
-    return formatted;
-  };
-
-  // Function to render formatted message content with proper line breaks and structure
-  const renderFormattedContent = (content, isStreaming = false, isStopped = false) => {
+  // Simple render function to display text with line breaks
+  const renderFormattedContent = (content, isStreaming) => {
     if (!content) return null;
-
-    // Split content by lines and render with proper formatting
+    
+    // Split by newlines and render each line
     const lines = content.split('\n');
-
+    
     return (
       <>
-        {lines.map((line, index) => {
-          const trimmedLine = line.trim();
-
-          // Skip empty lines but maintain spacing
-          if (!trimmedLine) {
-            return <div key={index} style={{ height: '0.75rem' }} />;
-          }
-
-          // Check if line is a heading (ends with colon)
-          const isHeading = trimmedLine.endsWith(':') && trimmedLine.length < 100;
-
-          // Check if line is a list item
-          const isListItem = trimmedLine.startsWith('•') ||
-            trimmedLine.startsWith('-') ||
-            /^\d+\./.test(trimmedLine);
-
-          // Check if line contains a URL
-          const containsUrl = /https?:\/\/[^\s]+/.test(trimmedLine);
-
-          return (
-            <div
-              key={index}
-              style={{
-                marginBottom: '0.5rem',
-                marginLeft: isListItem ? '1rem' : '0',
-                fontSize: '0.875rem',
-                fontWeight: isHeading ? '600' : '400',
-                color: isStopped ? '#8a3b00' : '#161616',
-                lineHeight: '1.6',
-                padding: isHeading ? '0.25rem 0' : '0',
-                wordBreak: 'break-word',
-                opacity: isStopped ? 0.8 : 1
-              }}
-            >
-              {containsUrl ? (
-                // Render URLs as clickable links
-                trimmedLine.split(/(https?:\/\/[^\s]+)/g).map((part, partIndex) => {
-                  if (part.match(/https?:\/\/[^\s]+/)) {
-                    return (
-                      <a
-                        key={partIndex}
-                        href={part}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{
-                          color: isStopped ? '#8a3b00' : '#0f62fe',
-                          textDecoration: 'underline'
-                        }}
-                      >
-                        {part}
-                      </a>
-                    );
-                  }
-                  return part;
-                })
-              ) : (
-                trimmedLine
-              )}
-            </div>
-          );
-        })}
-        {isStopped && (
-          <div style={{
-            marginTop: '0.5rem',
-            padding: '0.5rem',
-            background: '#fff8e1',
-            border: '1px solid #ffc107',
-            borderRadius: '4px',
-            fontSize: '0.75rem',
-            color: '#8a3b00'
-          }}>
-            Response was stopped by user
-          </div>
+        {lines.map((line, index) => (
+          <React.Fragment key={index}>
+            {line}
+            {index < lines.length - 1 && <br />}
+          </React.Fragment>
+        ))}
+        {isStreaming && (
+          <span style={{
+            display: 'inline-block',
+            width: '8px',
+            height: '16px',
+            background: '#0f62fe',
+            marginLeft: '2px',
+            animation: 'blink 1s step-end infinite'
+          }} />
         )}
       </>
     );
@@ -327,14 +208,12 @@ const AIChat = ({ documents, currentUser }) => {
       formData.append('user_id', username);
 
       // Send selected document IDs and filenames
-      // const documentIds = selectedDocuments.map(d => d.id).join(',');
       const documentNames = selectedDocuments.map(d => d.name).join(',');
-
-      // formData.append('document_ids', documentIds);
       formData.append('document_names', documentNames);
-
-      const apiUrl = process.env.REACT_APP_API_BASE_URL
+      
+      const apiUrl = process.env.REACT_APP_API_BASE_URL  
       const response = await fetch(`${apiUrl}/ask-query`,{
+      //const response = await fetch('http://129.40.90.163:8002/ask-query', {
         method: 'POST',
         body: formData,
         signal: abortControllerRef.current.signal
@@ -363,12 +242,9 @@ const AIChat = ({ documents, currentUser }) => {
         const chunk = decoder.decode(value, { stream: true });
         accumulatedText += chunk;
 
-        // Clean the text before updating UI
-        const cleanedChunk = cleanResponseText(accumulatedText);
-
-        // Call the callback with the cleaned chunk
+        // Call the callback with the raw chunk
         if (onChunk) {
-          onChunk(cleanedChunk);
+          onChunk(accumulatedText);
         }
 
         // Small delay to make streaming visible
@@ -380,7 +256,7 @@ const AIChat = ({ documents, currentUser }) => {
     } catch (error) {
       clearTimeout(timeoutId);
       if (error.name === 'AbortError') {
-        throw new Error('Request was stopped by user.');
+        throw new Error('Request timed out after 2 minutes. Showing partial response received so far.');
       }
       throw error;
     }
@@ -449,7 +325,7 @@ const AIChat = ({ documents, currentUser }) => {
         }
       );
 
-      // Streaming completed successfully - clean the final response
+      // Streaming completed successfully - clean the final response (only remove [DONE])
       setMessages(prev => prev.map(msg =>
         msg.id === streamingMessageId
           ? { ...msg, content: cleanResponseText(msg.content), isStreaming: false }
@@ -458,13 +334,7 @@ const AIChat = ({ documents, currentUser }) => {
     } catch (error) {
       console.error('Streaming failed:', error);
 
-      // Handle abort (user stopped) differently
-      if (error.message === 'Request was stopped by user.') {
-        // Message already updated in stopStreaming function
-        return;
-      }
-
-      // Handle other errors
+      // Handle timeout or other errors
       if (accumulatedContent) {
         // Show partial response with error notice
         const errorMessage = accumulatedContent + `\n\n[Note: ${error.message}]`;
@@ -561,7 +431,7 @@ const AIChat = ({ documents, currentUser }) => {
         }
       );
 
-      // Streaming completed successfully - clean the final response
+      // Streaming completed successfully - clean the final response (only remove [DONE])
       setMessages(prev => prev.map(msg =>
         msg.id === streamingMessageId
           ? { ...msg, content: cleanResponseText(msg.content), isStreaming: false }
@@ -570,13 +440,7 @@ const AIChat = ({ documents, currentUser }) => {
     } catch (error) {
       console.error('Streaming failed:', error);
 
-      // Handle abort (user stopped) differently
-      if (error.message === 'Request was stopped by user.') {
-        // Message already updated in stopStreaming function
-        return;
-      }
-
-      // Handle other errors
+      // Handle timeout or other errors
       if (accumulatedContent) {
         // Show partial response with error notice
         const errorMessage = accumulatedContent + `\n\n[Note: ${error.message}]`;
@@ -657,39 +521,6 @@ const AIChat = ({ documents, currentUser }) => {
               </p>
             </div>
           </div>
-
-          {/* Stop Streaming Button - Only shows when streaming is active */}
-          {streamingMessageId && (
-            <button
-              onClick={stopStreaming}
-              style={{
-                position: 'absolute',
-                top: '1.5rem',
-                right: '9rem',
-                background: '#fff1f1',
-                border: '1px solid #ffd7d9',
-                color: '#da1e28',
-                padding: '0.4rem 0.8rem',
-                borderRadius: '6px',
-                fontSize: '0.7rem',
-                fontWeight: 500,
-                cursor: 'pointer',
-                transition: 'all 0.2s',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.25rem'
-              }}
-              onMouseEnter={(e) => {
-                e.target.style.background = '#ffd7d9';
-              }}
-              onMouseLeave={(e) => {
-                e.target.style.background = '#fff1f1';
-              }}
-            >
-              <StopFilled size={12} />
-              Stop
-            </button>
-          )}
 
           {/* Clear Chat Button */}
           <button
@@ -837,8 +668,8 @@ const AIChat = ({ documents, currentUser }) => {
               {/* Message Content */}
               <div
                 style={{
-                  background: msg.isStopped ? '#fff8e1' : msg.role === 'assistant' ? 'white' : '#edf5ff',
-                  border: `2px solid ${msg.isStopped ? '#ffc107' : msg.role === 'assistant' ? '#e0e0e0' : '#d0e2ff'}`,
+                  background: msg.role === 'assistant' ? 'white' : '#edf5ff',
+                  border: `2px solid ${msg.role === 'assistant' ? '#e0e0e0' : '#d0e2ff'}`,
                   borderRadius: '8px',
                   padding: '1rem',
                   marginLeft: msg.role === 'assistant' ? '0' : '2rem',
@@ -851,10 +682,11 @@ const AIChat = ({ documents, currentUser }) => {
                   lineHeight: '1.5',
                   fontSize: '0.875rem',
                   wordBreak: 'break-word',
+                  whiteSpace: 'pre-wrap',
                   minHeight: msg.isStreaming && !msg.content ? '40px' : 'auto'
                 }}>
                   {msg.role === 'assistant' ?
-                    renderFormattedContent(msg.content, msg.isStreaming, msg.isStopped) :
+                    renderFormattedContent(msg.content, msg.isStreaming) :
                     msg.content
                   }
 
