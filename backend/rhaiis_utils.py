@@ -205,7 +205,7 @@ async def call_rhaiis_model_streaming(prompt: str) -> AsyncGenerator[str, None]:
     import aiohttp
     import time
     
-    url = "http://129.40.90.163:9000/v1/completions"
+    url = "http://129.40.90.163:9000/v1/chat/completions"
     headers = {"Content-Type": "application/json"}
 
     truncated_prompt = prompt[:MAX_PROMPT_LENGTH]
@@ -213,7 +213,9 @@ async def call_rhaiis_model_streaming(prompt: str) -> AsyncGenerator[str, None]:
 
     payload = {
         "model": "ibm-granite/granite-3.3-8b-instruct",
-        "prompt": truncated_prompt,
+        "messages": [
+            {"role": "user", "content": truncated_prompt}
+        ],
         "max_tokens": MAX_TOKENS,
         "temperature": 0,
         "top_p": 1.0,
@@ -237,38 +239,36 @@ async def call_rhaiis_model_streaming(prompt: str) -> AsyncGenerator[str, None]:
                 print(f">>> RHAIIS API response status: {response.status}")
                 
                 # Read the response as a stream
-                buffer = ""
+                buffer = ""                
                 async for chunk_bytes in response.content.iter_any():
                     if not chunk_bytes:
                         continue
-                    
-                    chunk = chunk_bytes.decode('utf-8')
+
+                    chunk = chunk_bytes.decode("utf-8")
                     buffer += chunk
-                    
-                    # Process complete lines
-                    while '\n' in buffer:
-                        line, buffer = buffer.split('\n', 1)
+
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
                         line = line.strip()
-                        
-                        if not line:
+
+                        if not line or not line.startswith("data:"):
                             continue
-                            
-                        if line.startswith('data: '):
-                            data_str = line[6:].strip()
-                            
-                            if data_str == '[DONE]':
-                                yield "[DONE]"
-                                return
-                            
-                            try:
-                                data = json.loads(data_str)
-                                if "choices" in data and len(data["choices"]) > 0:
-                                    text_piece = data["choices"][0].get("text", "")
-                                    if text_piece:
-                                        yield text_piece
-                            except json.JSONDecodeError as e:
-                                print(f"JSON decode error: {e}, data: {data_str}")
-                                continue
+
+                        data_str = line[5:].strip()
+
+                        if data_str == "[DONE]":
+                            print("\n>>> [DONE]")
+                            yield "[DONE]"
+                            return
+
+                        try:
+                            data_json = json.loads(data_str)
+                            delta = data_json["choices"][0]["delta"].get("content", "")
+                            if delta:
+                                print(delta, end="", flush=True)
+                                yield delta
+                        except Exception as e:
+                            print(f"JSON error: {e} | data: {data_str}")
                 
                 # Handle any remaining data in buffer
                 if buffer.strip():
