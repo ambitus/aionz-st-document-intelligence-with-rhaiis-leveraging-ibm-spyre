@@ -294,7 +294,7 @@ const processUserDocuments = (userDocuments, username) => {
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent'
           }}>
-            Document Intelligence with IBM Spyre
+           Document Intelligence with Spyre Accelerator for IBM Z & IBM LinuxONE
           </h1>
           <p style={{
             fontSize: '18px',
