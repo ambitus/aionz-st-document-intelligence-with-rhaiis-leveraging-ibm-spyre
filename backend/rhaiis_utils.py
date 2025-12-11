@@ -7,6 +7,7 @@ for LLM completions with support for both streaming and non-streaming modes.
 
 import asyncio
 import json
+import os
 import ssl
 import time
 from typing import Any, AsyncGenerator, Generator, Optional
@@ -21,6 +22,10 @@ from utils import green_log
 # Configuration constants
 MAX_TOKENS = 10000
 MAX_PROMPT_LENGTH = 10000
+
+
+# Read the RHAIIS base URL from environment
+RHAIIS_API_BASE_URL = os.environ.get("RHAIIS_API_BASE_URL", "http://localhost:9000")
 
 
 class TLSAdapter(HTTPAdapter):
@@ -50,7 +55,7 @@ def call_rhaiis_model_without_streaming(
     Shows progress messages for each step.
     """
     print(">>> Preparing RHAIIS API call...")
-    url = "http://129.40.90.163:9000/v1/completions"
+    url = f"{RHAIIS_API_BASE_URL}/v1/completions"
     headers = {"Content-Type": "application/json"}
 
     # Truncate prompt to prevent huge payloads
@@ -123,7 +128,7 @@ def call_rhaiis_model(
     In non-streaming mode, it returns the complete JSON response.
     """
     print(">>> Preparing RHAIIS API call...")
-    url = "http://129.40.90.163:9000/v1/completions"
+    url = f"{RHAIIS_API_BASE_URL}/v1/completions"
     headers = {"Content-Type": "application/json"}
 
     truncated_prompt = prompt[:MAX_PROMPT_LENGTH]
@@ -216,8 +221,8 @@ def call_rhaiis_model(
 async def call_rhaiis_model_streaming(prompt: str) -> AsyncGenerator[str, None]:
     """Call RHAIIS API with streaming support - FIXED VERSION."""
     import aiohttp
-    
-    url = "http://129.40.90.163:9000/v1/chat/completions"
+
+    url = f"{RHAIIS_API_BASE_URL}/v1/chat/completions"
     headers = {"Content-Type": "application/json"}
 
     truncated_prompt = prompt[:MAX_PROMPT_LENGTH]
