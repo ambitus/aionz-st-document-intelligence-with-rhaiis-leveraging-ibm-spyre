@@ -306,7 +306,6 @@ const stopStreaming = async (tempDocId) => {
         formData.append('user_id', currentUser.username);
 
         const apiUrl = process.env.REACT_APP_API_BASE_URL  
-       // const streamUrl = process.env.REACT_APP_API_BASE_URL || 'http://129.40.90.163:8002/upload-files';
         
         setStreamingStatus(prev => ({ ...prev, [tempDocId]: 'Uploading file to server...' }));
         setStreamingProgress(prev => ({ ...prev, [tempDocId]: 10 }));
@@ -582,7 +581,6 @@ const stopStreaming = async (tempDocId) => {
         }
 
         // Call server API to delete file
-        //const deleteUrl = `http://129.40.90.163:8002/delete-files?user_id=${currentUser.username}&filename=${encodeURIComponent(docName)}`;
         const apiUrl = process.env.REACT_APP_API_BASE_URL
 
         const response = await fetch(`${apiUrl}/delete-file?user_id=${currentUser.username}&filename=${encodeURIComponent(docName)}`, {
@@ -2496,6 +2494,75 @@ const stopStreaming = async (tempDocId) => {
                       });
                     })()}
                   </div>
+                </div>
+                   {/* Download Summary Buttons */}
+                <div style={{
+                  display: 'flex',
+                  gap: '0.75rem',
+                  marginTop: '1rem',
+                  flexWrap: 'wrap'
+                }}>
+                  <button
+                    onClick={() => downloadSummary(selectedDocForDetails, 'txt')}
+                    style={{
+                      background: 'white',
+                      border: '2px solid #e5e7eb',
+                      padding: '0.625rem 1.25rem',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontSize: '0.875rem',
+                      color: '#374151',
+                      fontWeight: 600,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseOver={(e) => {
+                      e.currentTarget.style.borderColor = '#0f62fe';
+                      e.currentTarget.style.color = '#0f62fe';
+                      e.currentTarget.style.transform = 'translateY(-2px)';
+                      e.currentTarget.style.boxShadow = '0 4px 6px rgba(0, 0, 0, 0.1)';
+                    }}
+                    onMouseOut={(e) => {
+                      e.currentTarget.style.borderColor = '#e5e7eb';
+                      e.currentTarget.style.color = '#374151';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                      e.currentTarget.style.boxShadow = 'none';
+                    }}
+                  >
+                    <Download size={16} />
+                    Download as TXT
+                  </button>
+                  <button
+                    onClick={() => downloadSummary(selectedDocForDetails, 'pdf')}
+                    style={{
+                      background: 'linear-gradient(135deg, #0f62fe 0%, #0353e9 100%)',
+                      border: 'none',
+                      padding: '0.625rem 1.25rem',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontSize: '0.875rem',
+                      color: 'white',
+                      fontWeight: 600,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      transition: 'all 0.2s',
+                      boxShadow: '0 4px 6px rgba(15, 98, 254, 0.3)'
+                    }}
+                    onMouseOver={(e) => {
+                      e.currentTarget.style.transform = 'translateY(-2px)';
+                      e.currentTarget.style.boxShadow = '0 6px 12px rgba(15, 98, 254, 0.4)';
+                    }}
+                    onMouseOut={(e) => {
+                      e.currentTarget.style.transform = 'translateY(0)';
+                      e.currentTarget.style.boxShadow = '0 4px 6px rgba(15, 98, 254, 0.3)';
+                    }}
+                  >
+                    <Download size={16} />
+                    Download as PDF
+                  </button>
                 </div>
               </div>
 

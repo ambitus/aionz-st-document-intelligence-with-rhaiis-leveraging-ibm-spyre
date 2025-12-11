@@ -32,7 +32,6 @@ useEffect(() => {
         try {
                 const apiUrl = process.env.REACT_APP_API_BASE_URL  
                 const res = await fetch(`${apiUrl}/rhaiis/health`,{
-                // const res = await fetch("http://129.40.90.163:8002/rhaiis/health", {
                 method: "GET",
                 headers: { "accept": "application/json" }
             });
@@ -122,7 +121,7 @@ useEffect(() => {
                                         </div>
                                         <div>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                                                <h1 style={{ color: 'white', fontSize: '1.25rem', fontWeight: 500, margin: 0 }}>Document Intelligence</h1>
+                                                <h1 style={{ color: 'white', fontSize: '1.25rem', fontWeight: 500, margin: 0 }}>Document Intelligence with Spyre Accelerator for IBM Z & IBM LinuxONE</h1>
                                             </div>
                                             <p style={{ color: '#c6c6c6', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
                                                 <span style={{ width: '18px', height: '18px', color: '#0f62fe' }}><Icons.Sparkles /></span>
