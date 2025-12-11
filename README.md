@@ -1,4 +1,4 @@
-# AI on IBM Z Spyre enhanced Document Summarizer Solution Template
+# AI on Spyre Accelerator for IBM Z & IBM LinuxONE Document Summarizer Solution Template
 
 This repository contains code for summarizing documents using Spyre with Red Hat AI Inference Server.
 This is an [AI on IBM Z solution template](https://ambitus.github.io/aionz-solution-templates/) for document summarization using Spyre. This solution template provides an example on how to deploy RHAIIS in an IBM Z environment, while making use of Spyre, Granite models, and more.
