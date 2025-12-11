@@ -1,28 +1,33 @@
+"""
+RHAIIS (Remote Hosted AI Inference Service) client implementation.
+
+This module provides a client for interacting with RHAIIS API endpoints
+for LLM completions with support for both streaming and non-streaming modes.
+"""
+
+import asyncio
+import json
+import ssl
+import time
+from typing import Any, AsyncGenerator, Generator, Optional
+
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import PoolManager
 from urllib3.util.retry import Retry
-import time
-import ssl
-from typing import Any
+
 from utils import green_log
-import json
-import asyncio
-from typing import AsyncGenerator, Any
-from collections import defaultdict
 
-
-MAX_TOKENS=10000
-MAX_PROMPT_LENGTH=10000
-
-# ----------------------------
-# RHAIIS
-# ----------------------------
+# Configuration constants
+MAX_TOKENS = 10000
+MAX_PROMPT_LENGTH = 10000
 
 
 class TLSAdapter(HTTPAdapter):
-    """Custom Adapter to enforce TLS 1.2+"""
-    def init_poolmanager(self, *args, **kwargs):
+    """Custom Adapter to enforce TLS 1.2+."""
+    
+    def init_poolmanager(self, *args: Any, **kwargs: Any) -> PoolManager:
+        """Initialize pool manager with TLS 1.2+ enforcement."""
         print(">>> Initializing TLS 1.2+ pool manager...")
         context = ssl.create_default_context()
         context.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -36,10 +41,11 @@ def call_rhaiis_model_without_streaming(
     max_tokens: int = MAX_TOKENS,
     temperature: float = 0,
     top_p: float = 1.0,
-    stream = False
+    stream: bool = False
 ) -> Any:
     """
     Call external RHAIIS API (HTTPS) to get a completion.
+    
     Includes retries, TLS 1.2 enforcement, timeout, and prompt truncation.
     Shows progress messages for each step.
     """
@@ -108,7 +114,14 @@ def call_rhaiis_model(
     temperature: float = 0,
     top_p: float = 1.0,
     stream: bool = True,
-):
+) -> Generator[str, None, None]:
+    """
+    Call RHAIIS API with streaming support.
+    
+    This function supports both streaming and non-streaming modes.
+    In streaming mode, it yields text chunks as they arrive.
+    In non-streaming mode, it returns the complete JSON response.
+    """
     print(">>> Preparing RHAIIS API call...")
     url = "http://129.40.90.163:9000/v1/completions"
     headers = {"Content-Type": "application/json"}
@@ -197,13 +210,12 @@ def call_rhaiis_model(
     green_log(f"\n>>> Total duration of response without streaming: {t_stream_end_overall - t_start_overall:.2f}s")
 
     print(">>> Parsing JSON response...")
-    return response.json()
+    yield response.json()
 
 
 async def call_rhaiis_model_streaming(prompt: str) -> AsyncGenerator[str, None]:
-    """Call RHAIIS API with streaming support - FIXED VERSION"""
+    """Call RHAIIS API with streaming support - FIXED VERSION."""
     import aiohttp
-    import time
     
     url = "http://129.40.90.163:9000/v1/chat/completions"
     headers = {"Content-Type": "application/json"}

@@ -1,34 +1,44 @@
-from fastapi import FastAPI, File, UploadFile, Form
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from mongo_utils import check_user_exist, ingest_documents_with_summaries_in_background, delete_from_mongodb
-from opensearch_utils import retrieve_with_smart_fallback, delete_from_opensearch
-from rag import build_rag_prompt
-from rhaiis_utils import call_rhaiis_model_streaming
-from utils import extract_text_from_pdf, extract_text_from_doc, green_log
-import subprocess
-import requests
-from typing import List, Optional
-from langchain.schema import Document
-from fastapi.responses import JSONResponse
-import json
-from fastapi.responses import StreamingResponse
+"""
+FastAPI application for document management and RAG (Retrieval-Augmented Generation) system.
+
+This module provides RESTful endpoints for:
+- Uploading and processing documents (PDF, DOCX, TXT)
+- Checking user existence and document status
+- Deleting documents from storage
+- Querying documents with RAG-based question answering
+- Streaming responses for real-time interaction
+"""
+
 import asyncio
 import json
-from typing import AsyncGenerator, Dict, Any
-from collections import defaultdict
-from fastapi import HTTPException
-import urllib.parse
-import re
 import os
+import re
+import urllib.parse
+from typing import AsyncGenerator, Dict, List, Optional, Any
+
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
+from langchain.schema import Document
+
+from mongo_utils import (
+    check_user_exist,
+    delete_from_mongodb,
+    ingest_documents_with_summaries_in_background,
+)
+from opensearch_utils import delete_from_opensearch, retrieve_with_smart_fallback
+from rag import build_rag_prompt
+from rhaiis_utils import call_rhaiis_model_streaming
+from utils import extract_text_from_doc, extract_text_from_pdf, green_log
 
 # ----------------------------
 # FILENAME NORMALIZATION UTILS
 # ----------------------------
 
+
 def normalize_filename(filename: str) -> str:
     """
-    Normalize filenames by URL decoding if encoded and cleaning spaces
+    Normalize filenames by URL decoding if encoded and cleaning spaces.
     """
     if not filename:
         return filename
@@ -48,19 +58,21 @@ def normalize_filename(filename: str) -> str:
     
     return cleaned.strip()
 
+
 def sanitize_filename_for_storage(filename: str) -> str:
     """
-    Sanitize filename for consistent storage in database
+    Sanitize filename for consistent storage in database.
     """
     normalized = normalize_filename(filename)
     basename = os.path.basename(normalized)
     return basename
 
+
 # ----------------------------
 # API SERVER
 # ----------------------------
 
-app = FastAPI()
+app = FastAPI(title="Document RAG System API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -75,10 +87,10 @@ app.add_middleware(
 async def upload_files(
     files: List[UploadFile] = File(...), 
     user_id: str = Form(...)
-):
-    """Process files, stream summarization, then background ingestion"""
+) -> StreamingResponse:
+    """Process files, stream summarization, then background ingestion."""
     
-    user_id= user_id.lower()
+    user_id = user_id.lower()
     docs = []
     for file in files:
         # Normalize filename for consistent storage
@@ -113,7 +125,8 @@ async def upload_files(
 
 
 @app.post("/user_exists_check")
-async def user_exists(user_id:str):
+async def user_exists(user_id: str) -> Any:
+    """Check if a user exists and return their documents."""
     user_id = user_id.lower()
     return check_user_exist(user_id)
 
@@ -122,9 +135,9 @@ async def user_exists(user_id:str):
 async def delete_file(
     user_id: str,
     filename: str
-):
+) -> Dict[str, Any]:
     """
-    Delete a single file from both MongoDB and OpenSearch for a specific user
+    Delete a single file from both MongoDB and OpenSearch for a specific user.
     """
     user_id = user_id.lower()
     try:
@@ -194,7 +207,8 @@ async def ask_query(
     query: str = Form(...),
     user_id: str = Form(...),
     document_names: Optional[str] = Form(None)  # Make optional
-):
+) -> StreamingResponse:
+    """Ask a query using RAG (Retrieval-Augmented Generation)."""
     user_id = user_id.lower()
     collection_name = f"user_{user_id}"
     
@@ -229,7 +243,8 @@ async def ask_query(
 
 
 @app.get("/rhaiis/health")
-def rhaiis_health_check():
+def rhaiis_health_check() -> JSONResponse:
+    """Check health status of RHAIIS endpoint."""
     status = is_rhaiis_endpoint_healthy()
 
     return JSONResponse(
@@ -243,11 +258,14 @@ def rhaiis_health_check():
 # ----------------------------
 
 
-async def stream_and_process_documents(docs: list, user_id: str) -> AsyncGenerator[str, None]:
-    """Stream summaries and collect them for background processing"""
+async def stream_and_process_documents(
+    docs: List[Dict[str, str]], 
+    user_id: str
+) -> AsyncGenerator[str, None]:
+    """Stream summaries and collect them for background processing."""
     all_summaries = []
    
-    user_id=user_id.lower()
+    user_id = user_id.lower()
     try:
         for doc in docs:
             # Send document start marker
@@ -318,7 +336,7 @@ async def stream_and_process_documents(docs: list, user_id: str) -> AsyncGenerat
 
 
 async def stream_rhaiis_response(prompt: str) -> AsyncGenerator[str, None]:
-    """Stream RHAIIS response in the same format as call_rhaiis_model with stream=True"""
+    """Stream RHAIIS response in the same format as call_rhaiis_model with stream=True."""
     try:
         response_stream = call_rhaiis_model_streaming(prompt)
         
@@ -341,7 +359,7 @@ async def stream_rhaiis_response(prompt: str) -> AsyncGenerator[str, None]:
 
 
 def clean_summary_text(summary: str) -> str:
-    """Clean summary text by removing prompts"""
+    """Clean summary text by removing prompts."""
     if not summary:
         return ""
     
@@ -363,7 +381,10 @@ def clean_summary_text(summary: str) -> str:
     return cleaned.strip()
 
 
-def is_rhaiis_endpoint_healthy() -> dict:
+def is_rhaiis_endpoint_healthy() -> Dict[str, Any]:
+    """Check if RHAIIS endpoint is reachable and healthy."""
+    import requests
+    
     url = "http://129.40.90.163:9000/v1/completions"
 
     try:
@@ -394,3 +415,7 @@ def is_rhaiis_endpoint_healthy() -> dict:
             "reachable": False,
             "error": str(e)
         }
+
+
+# Export for uvicorn or other ASGI servers
+__all__ = ["app"]
