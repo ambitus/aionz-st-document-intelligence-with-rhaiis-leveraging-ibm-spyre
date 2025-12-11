@@ -17,7 +17,8 @@ services:
       - /run/podman/podman.sock:/run/podman/podman.sock
     working_dir: /home/dev/Spyre_Document_Summarizer
     environment:
-      - REACT_APP_API_BASE_URL=${REACT_APP_API_BASE_URL:-http://129.40.90.163:8002}
+      - REACT_APP_API_BASE_URL=${REACT_APP_API_BASE_URL:-http://rhaiis:8002}
+      - RHAIIS_API_BASE_URL=http://rhaiis:9000
     command: >
       bash -c "
         set -e;
