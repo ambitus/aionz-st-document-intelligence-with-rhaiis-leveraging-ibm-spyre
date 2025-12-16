@@ -27,6 +27,12 @@ Visit the following URL to access the application:
 http://localhost:3002
 ```
 
+or
+
+```bash
+http://<your-machine-ip>:3002
+```
+
 ### 3. [Optional] Adjust Podman VM resources (CPU, Memory, Disk)
 
 ```bash
