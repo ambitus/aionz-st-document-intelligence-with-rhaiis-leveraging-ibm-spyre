@@ -12,6 +12,10 @@ This is an [AI on IBM Z solution template](https://ambitus.github.io/aionz-solut
 - RHAIIS
 
 
+## Getting Started
+
+View or download the [official AI Solution Template PDF](https://github.com/ambitus/aionz-st-document-intelligence-with-rhaiis-leveraging-ibm-spyre/blob/main/Document_Intelligence_RHAIIS_solution_template.docx) to get started
+
 ## Installation as a container
 
 ### 1. Set Environment Variables
@@ -42,7 +46,7 @@ Network access (from other devices):
 http://<your-machine-ip>:3002
 ```
 
-### 3. [Optional] Adjust Podman VM resources (CPU, Memory, Disk)
+### 4. [Optional] Adjust Podman VM resources (CPU, Memory, Disk)
 
 ```bash
 # Stop the Podman machine
