@@ -14,17 +14,32 @@ This is an [AI on IBM Z solution template](https://ambitus.github.io/aionz-solut
 
 ## Installation as a container
 
-### 1. Build and run the container
+### 1. Set Environment Variables
 
 ```bash
+# Set the host IP for cross-container communication
+export HOST_IP=$(hostname -I | awk '{print $1}')
+```
+
+### 2. Build and Start Containers
+
+```bash
+# Build images and start containers in detached mode
 podman-compose up --build -d
 ```
 
-### 2. Open the Frontend UI in Your Browser
+### 3. Access the Application
 
-Visit the following URL to access the application:
+Open your web browser and navigate to:
+
+Local access:
 ```bash
 http://localhost:3002
+```
+
+Network access (from other devices):
+```bash
+http://<your-machine-ip>:3002
 ```
 
 ### 3. [Optional] Adjust Podman VM resources (CPU, Memory, Disk)
