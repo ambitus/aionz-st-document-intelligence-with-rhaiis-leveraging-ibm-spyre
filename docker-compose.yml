@@ -5,7 +5,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      isolation: chroot
     image: localhost/spyre-document-summarizer
     container_name: spyre-document-summarizer
     security_opt:
@@ -14,11 +13,13 @@ services:
     volumes:
       - ./backend:/home/dev/Spyre_Document_Summarizer/backend
       - ./frontend:/home/dev/Spyre_Document_Summarizer/frontend
-      - /run/podman/podman.sock:/run/podman/podman.sock
     working_dir: /home/dev/Spyre_Document_Summarizer
     environment:
-      - REACT_APP_API_BASE_URL=${REACT_APP_API_BASE_URL:-http://rhaiis:8002}
-      - RHAIIS_API_BASE_URL=http://rhaiis:9000
+      - REACT_APP_API_BASE_URL=http://${HOST_IP:-localhost}:8002
+      - RHAIIS_API_BASE_URL=http://${HOST_IP:-localhost}:9000
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     command: >
       bash -c "
         set -e;
@@ -32,14 +33,17 @@ services:
         mkdir -p /home/dev/Spyre_Document_Summarizer &&
         mkdir -p /home/dev/Spyre_Document_Summarizer/logs;
 
+        touch /home/dev/Spyre_Document_Summarizer/logs/frontend.log;
+        touch /home/dev/Spyre_Document_Summarizer/logs/backend.log;
+
         echo 'Listing project directory:' &&
         ls -l /home/dev/Spyre_Document_Summarizer;
 
         if [ -d /home/dev/Spyre_Document_Summarizer/frontend ]; then
           cd /home/dev/Spyre_Document_Summarizer/frontend &&
           rm -rf node_modules &&
-          npm install --silent &&
-          PORT=3002 npm start --silent > /home/dev/Spyre_Document_Summarizer/logs/frontend.log 2>&1 &
+          npm install &&
+          PORT=3002 npm start > /home/dev/Spyre_Document_Summarizer/logs/frontend.log 2>&1 &
         else
           echo 'ERROR: frontend directory not found' > /home/dev/Spyre_Document_Summarizer/logs/frontend.log
         fi;
@@ -51,10 +55,10 @@ services:
           echo 'ERROR: backend directory not found' > /home/dev/Spyre_Document_Summarizer/logs/backend.log
         fi;
 
+        # Wait a moment for logs to be created, then tail them
+        sleep 2;
         tail -f /home/dev/Spyre_Document_Summarizer/logs/frontend.log /home/dev/Spyre_Document_Summarizer/logs/backend.log
       "
-
-
     tty: true
     ports:
       - "3002:3002"
@@ -69,6 +73,7 @@ services:
     image: docker.io/s390x/mongo:4
     container_name: mongodb
     security_opt:
+      - seccomp=unconfined
       - label=disable
     environment:
       - DISABLE_SECURITY_PLUGIN=true
@@ -81,6 +86,7 @@ services:
     image: phoenixsystemsag/opensearch:2.9.0
     container_name: opensearch-doc-summary
     security_opt:
+      - seccomp=unconfined
       - label=disable
     environment:
       - discovery.type=single-node

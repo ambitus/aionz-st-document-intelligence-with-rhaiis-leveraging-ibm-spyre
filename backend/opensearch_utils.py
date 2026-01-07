@@ -146,7 +146,7 @@ def get_retriever_os(
 def ingest_code_to_os(
     docs: List[Dict[str, str]],
     model_name: str = EMBEDDING_MODEL,
-    index_name: str = "shreyaganeshe46@gmail.com"
+    index_name: str = "default_index"
 ) -> None:
     """
     Incrementally embed and ingest code snippets into OpenSearch.
@@ -411,10 +411,43 @@ def retrieve_with_smart_fallback(
     try:
         results = retriever.get_relevant_documents(query)[:k]
         logger.info(f"Retrieved {len(results)} documents for query")
-        return results
+
+        return remove_duplicate_chunks(results)[:k]
     except Exception as e:
         logger.error(f"Error during retrieval: {e}")
         return []
+
+
+def remove_duplicate_chunks(documents: List[Document]) -> List[Document]:
+    """
+    Remove duplicate Document objects based on normalized text content.
+
+    This function filters a list of Document objects to return only those
+    with unique content. Documents are considered duplicates if their
+    page content, after normalization (stripping whitespace and converting
+    to lowercase), produces identical hash values.
+
+    Args:
+        documents: A list of Document objects to deduplicate. Each Document
+            must have a `page_content` attribute containing the text content.
+
+    Returns:
+        A list containing only unique Document objects, preserving the
+        original order of first occurrence. The returned list maintains
+        the same element type as the input.
+    """
+    seen = set()
+    unique_docs = []
+
+    for doc in documents:
+        # Use hash or normalized content for comparison
+        content_hash = hash(doc.page_content.strip().lower())
+
+        if content_hash not in seen:
+            seen.add(content_hash)
+            unique_docs.append(doc)
+
+    return unique_docs
 
 
 # Export public API
