@@ -392,6 +392,7 @@ const SetupGuide = () => {
             }}>
               {[
                 'IBM ReadHat Inference server with Spyre Connected',
+                'Cloud Storage Ready',
                 'AI Models Active'
               ].map((item, idx) => (
                 <div key={idx} style={{
@@ -409,69 +410,52 @@ const SetupGuide = () => {
           </div>
 
           {/* Resources */}
- <div style={{
-  background: 'white',
-  border: '1px solid #e0e0e0',
-  borderRadius: '12px',
-  padding: '1.5rem',
-  boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)'
-}}>
-  <h3 style={{
-    color: '#161616',
-    fontSize: '1rem',
-    fontWeight: 500,
-    margin: '0 0 1rem 0'
-  }}>
-    Resources
-  </h3>
-
-  <div style={{
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.75rem'
-  }}>
-    {[
-      {
-        icon: Watson,
-        label: 'IBM RedHat Inference server with Spyre Docs',
-        link: 'https://github.com/ambitus/aionz-st-document-intelligence-with-rhaiis-leveraging-ibm-spyre'
-      },
-      {
-        icon: Icons.MessageSquare,
-        label: 'Video Tutorials',
-        link: '#'
-      }
-    ].map((resource, idx) => (
-      <a
-        key={idx}
-        href={resource.link}
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '0.75rem',
-          background: '#fafafa',
-          borderRadius: '6px',
-          textDecoration: 'none',
-          color: '#161616',
-          fontSize: '0.875rem',
-          transition: 'background 0.2s'
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <resource.icon size={16} style={{ color: '#0f62fe' }} />
-          {resource.label}
-        </div>
-        <span style={{ width: '16px', height: '16px', color: '#525252' }}>
-          <Icons.ArrowRight />
-        </span>
-      </a>
-    ))}
-  </div>
-</div>
-
+          <div style={{
+            background: 'white',
+            border: '1px solid #e0e0e0',
+            borderRadius: '12px',
+            padding: '1.5rem',
+            boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)'
+          }}>
+            <h3 style={{
+              color: '#161616',
+              fontSize: '1rem',
+              fontWeight: 500,
+              margin: '0 0 1rem 0'
+            }}>
+              Resources
+            </h3>
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.75rem'
+            }}>
+              {[
+                { icon: Icons.FileText, label: 'Documentation' },
+                { icon: Watson, label: 'IBM ReadHat Inference server with Spyre Docs' },
+                { icon: Icons.MessageSquare, label: 'Video Tutorials' }
+              ].map((resource, idx) => (
+                <a key={idx} href="#" style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '0.75rem',
+                  background: '#fafafa',
+                  borderRadius: '6px',
+                  textDecoration: 'none',
+                  color: '#161616',
+                  fontSize: '0.875rem',
+                  transition: 'background 0.2s'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <resource.icon size={16} style={{ color: '#0f62fe' }} />
+                    {resource.label}
+                  </div>
+                  <span style={{ width: '16px', height: '16px', color: '#525252' }}><Icons.ArrowRight /></span>
+                </a>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </div>
