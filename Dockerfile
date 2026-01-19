@@ -7,6 +7,7 @@ FROM docker.io/s390x/ubuntu:noble
 # Dependencies for all packages
 ENV APT_DEPENDENCIES "tar libffi-dev libssl-dev libopenblas-dev libblas-dev libjpeg-dev libpng-dev zlib1g-dev vim tk-dev cmake software-properties-common curl git make gnupg2 g++ openjdk-17-jdk netbase dpkg-dev flex unzip openssh-server libssl-dev libc6-dev ca-certificates wget dirmngr autoconf apt-transport-https uuid-dev libexpat1-dev gnupg zlib1g-dev pkg-config gcc gfortran npm  libopenblas-dev libxml2-dev libxslt1-dev"
 
+
 # Disable prompt for tzdata package, install required dependences, create dev user and group, create keyserver helper script
 RUN export DEBIAN_FRONTEND=noninteractive \
     && export DEBCONF_NONINTERACTIVE_SEEN=true \
