@@ -9,7 +9,7 @@ from typing import Optional
 OS_HOST: str = os.getenv("OS_HOST", "http://opensearch:9200")
 
 # Embedding Model Configuration
-EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "ibm-granite/granite-4.0-micro")
 
 # Text Processing Configuration
 CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "25"))
