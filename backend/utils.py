@@ -15,6 +15,24 @@ from docx import Document
 from PyPDF2 import PdfReader
 
 from config import CHUNK_SIZE, CHUNK_OVERLAP
+from langdetect import detect, DetectorFactory
+
+# Make detection deterministic
+DetectorFactory.seed = 0
+
+def detect_language(text: str) -> str:
+    """
+    Detect language using langdetect.
+
+    Returns ISO code: 'en', 'fr', 'pt', etc.
+    """
+    if not text or not text.strip():
+        return "en"
+
+    try:
+        return detect(text)
+    except Exception:
+        return "en"
 
 
 def green_log(message: str) -> None:
