@@ -29,7 +29,7 @@ from mongo_utils import (
 from opensearch_utils import delete_from_opensearch, retrieve_with_smart_fallback
 from rag import build_rag_prompt
 from rhaiis_utils import call_rhaiis_model_streaming
-from utils import extract_text_from_doc, extract_text_from_pdf, green_log
+from utils import extract_text_from_doc, extract_text_from_pdf, detect_language
 
 # ----------------------------
 # FILENAME NORMALIZATION UTILS
@@ -223,7 +223,7 @@ async def ask_query(
         query=query,
         collection_name=collection_name,
         document_names=selected_docs,
-        k=5
+        k=3
     )
 
     prompt = build_rag_prompt(query, retrieved_chunks)
@@ -279,15 +279,48 @@ async def stream_and_process_documents(
                 'length': len(doc['content']),
                 'truncated': False
             })}\n\n"
-            
+
+            # -----------------------------
+            # Language detection
+            # -----------------------------
+            language = detect_language(doc["content"][:2000])
+
+            if language == "fr":
+                system_instruction = (
+                    "Tu es un assistant expert.\n"
+                    "Résume le document ci-dessous uniquement en français.\n"
+                    "Sois clair, concis et fidèle au contenu.\n"
+                    "N'ajoute aucune information qui n'est pas présente dans le document."
+                )
+            elif language == "pt":
+                system_instruction = (
+                    "Você é um assistente especialista.\n"
+                    "Resuma o documento abaixo apenas em português.\n"
+                    "Seja claro, conciso e fiel ao conteúdo.\n"
+                    "Não adicione informações que não estejam no documento."
+                )
+            else:
+                system_instruction = (
+                    "You are a smart document analyzer.\n"
+                    "Summarize the document below clearly and concisely.\n"
+                    "Do not add information that is not present in the document."
+                )
+
             # Collect summary chunks
             summary_chunks = []
-            
-            # Create prompt for summarization
-            prompt = f"Summarize the following document:\n\nDocument:\n{doc['content'][:16000]}"
-            
+
+            # -----------------------------
+            # Language-aware summarization prompt
+            # -----------------------------
+            prompt = f"""{system_instruction}
+
+            Document:
+            {doc['content'][:16000]}
+
+            Summary:"""
+
             summary_stream = call_rhaiis_model_streaming(prompt)
-            
+
             # Stream the summary content and collect it
             async for chunk in summary_stream:
                 if chunk == "[DONE]":
@@ -295,13 +328,13 @@ async def stream_and_process_documents(
                 if chunk.startswith("Error:"):
                     yield f"data: {json.dumps({'event': 'error', 'message': chunk})}\n\n"
                     break
-                    
+
                 summary_chunks.append(chunk)
                 yield f"data: {json.dumps({'event': 'summary_chunk', 'doc-summary': chunk})}\n\n"
-            
+
             # Combine summary chunks
             full_summary = ''.join(summary_chunks)
-            
+
             # Store summary with document
             doc_with_summary = {
                 "filename": doc["filename"],
@@ -311,28 +344,29 @@ async def stream_and_process_documents(
                 "summary_clean": clean_summary_text(full_summary)
             }
             all_summaries.append(doc_with_summary)
-            
+
             # Send document end marker
             yield f"data: {json.dumps({'event': 'document_end', 'filename': doc['filename']})}\n\n"
-        
+
         # Send completion marker
         yield f"data: {json.dumps({'event': 'all_complete'})}\n\n"
-        
-        # Debug: Print what we're sending to background
+
+        # Debug log
         print(f"Sending {len(all_summaries)} documents to background processing")
         for i, doc in enumerate(all_summaries):
             print(f"  Document {i+1}: {doc['filename']}, Summary length: {len(doc['summary_clean'])}")
-        
-        # Start background ingestion with all summaries
+
+        # Start background ingestion
         asyncio.create_task(
             ingest_documents_with_summaries_in_background(all_summaries, user_id)
         )
         return
-        
+
     except Exception as e:
         error_msg = json.dumps({"event": "error", "message": str(e)})
         yield f"data: {error_msg}\n\n"
         print(f"Error in streaming: {e}")
+
 
 
 async def stream_rhaiis_response(prompt: str) -> AsyncGenerator[str, None]:
