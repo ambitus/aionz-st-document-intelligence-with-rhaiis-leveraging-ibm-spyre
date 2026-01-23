@@ -23,6 +23,7 @@ def build_rag_prompt(question: str, chunks: List[Document]) -> str:
     - English (default)
     - French
     - Portuguese
+    - Hindi
     """
     # Validate inputs
     if not question or not question.strip():
@@ -31,7 +32,7 @@ def build_rag_prompt(question: str, chunks: List[Document]) -> str:
     if not chunks:
         raise ValueError("No context chunks provided for RAG prompt")
     
-        # ---- Combine context chunks ----
+    # ---- Combine context chunks ----
     context_parts = []
     for i, doc in enumerate(chunks):
         if hasattr(doc, "page_content") and doc.page_content:
@@ -47,7 +48,7 @@ def build_rag_prompt(question: str, chunks: List[Document]) -> str:
     logger.debug(f"Building RAG prompt for question: '{question[:50]}...'")
     logger.debug(f"Using {len(chunks)} context chunks")
 
-    # ---- Improved language detection ----
+    # ---- Language detection ----
     language = detect_language(question)
 
     # ---- Language-specific system instruction ----
@@ -65,6 +66,13 @@ def build_rag_prompt(question: str, chunks: List[Document]) -> str:
             "Use exclusivamente as informações fornecidas no contexto.\n"
             "Se a resposta não estiver no contexto, diga isso claramente."
         )
+    elif language == "hi":
+        system_instruction = (
+            "आप एक विशेषज्ञ सहायक हैं।\n"
+            "केवल हिंदी में उत्तर दें।\n"
+            "नीचे दिए गए संदर्भ में उपलब्ध जानकारी का ही उपयोग करें।\n"
+            "यदि उत्तर संदर्भ में नहीं है, तो स्पष्ट रूप से बताएं।"
+        )
     else:
         system_instruction = (
             "You are a smart document analyzer.\n"
@@ -75,13 +83,13 @@ def build_rag_prompt(question: str, chunks: List[Document]) -> str:
     # ---- Final prompt ----
     prompt = f"""{system_instruction}
 
-Context:
-{context}
+    Context:
+    {context}
 
-Question:
-{question}
+    Question:
+    {question}
 
-Answer:"""
+    Answer:"""
 
     logger.info(
         f"Built RAG prompt: language={language}, "
@@ -91,6 +99,61 @@ Answer:"""
     )
 
     return prompt.strip()
+
+
+def build_summarize_prompt(doc):
+    """
+    Build a language-aware prompt for document summarization.
+
+    Args:
+        doc: A dictionary containing document data. Expected to have a 'content'
+             key with the document text to summarize. The dictionary may contain
+             additional metadata (similar to Document objects in `build_rag_prompt`).
+
+    Returns:
+        str: A formatted prompt string ready for use with a language model.
+    """
+    language = detect_language(doc["content"][:2000])
+
+    if language == "fr":
+        system_instruction = (
+            "Tu es un assistant expert.\n"
+            "Résume le document ci-dessous uniquement en français.\n"
+            "Sois clair, concis et fidèle au contenu.\n"
+            "N'ajoute aucune information qui n'est pas présente dans le document."
+        )
+    elif language == "pt":
+        system_instruction = (
+            "Você é um assistente especialista.\n"
+            "Resuma o documento abaixo apenas em português.\n"
+            "Seja claro, conciso e fiel ao conteúdo.\n"
+            "Não adicione informações que não estejam no documento."
+        )
+    elif language == "hi":
+        system_instruction = (
+            "आप एक विशेषज्ञ सहायक हैं।\n"
+            "नीचे दिए गए दस्तावेज़ का सारांश केवल हिंदी में प्रस्तुत करें।\n"
+            "सार स्पष्ट, संक्षिप्त और दस्तावेज़ की जानकारी पर आधारित होना चाहिए।\n"
+            "दस्तावेज़ में न होने वाली कोई जानकारी न जोड़ें।"
+        )
+    else:
+        system_instruction = (
+            "You are a smart document analyzer.\n"
+            "Summarize the document below clearly and concisely.\n"
+            "Do not add information that is not present in the document."
+        )
+
+    # -----------------------------
+    # Language-aware summarization prompt
+    # -----------------------------
+    prompt = f"""{system_instruction}
+
+    Document:
+    {doc['content'][:16000]}
+
+    Summary:"""
+
+    return prompt
 
 
 

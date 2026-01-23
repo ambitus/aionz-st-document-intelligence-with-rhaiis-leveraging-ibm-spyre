@@ -27,9 +27,9 @@ from mongo_utils import (
     ingest_documents_with_summaries_in_background,
 )
 from opensearch_utils import delete_from_opensearch, retrieve_with_smart_fallback
-from rag import build_rag_prompt
+from rag import build_rag_prompt, build_summarize_prompt
 from rhaiis_utils import call_rhaiis_model_streaming
-from utils import extract_text_from_doc, extract_text_from_pdf, detect_language
+from utils import extract_text_from_doc, extract_text_from_pdf
 
 # ----------------------------
 # FILENAME NORMALIZATION UTILS
@@ -280,46 +280,12 @@ async def stream_and_process_documents(
                 'truncated': False
             })}\n\n"
 
-            # -----------------------------
-            # Language detection
-            # -----------------------------
-            language = detect_language(doc["content"][:2000])
+            prompt = build_summarize_prompt(doc)
 
-            if language == "fr":
-                system_instruction = (
-                    "Tu es un assistant expert.\n"
-                    "Résume le document ci-dessous uniquement en français.\n"
-                    "Sois clair, concis et fidèle au contenu.\n"
-                    "N'ajoute aucune information qui n'est pas présente dans le document."
-                )
-            elif language == "pt":
-                system_instruction = (
-                    "Você é um assistente especialista.\n"
-                    "Resuma o documento abaixo apenas em português.\n"
-                    "Seja claro, conciso e fiel ao conteúdo.\n"
-                    "Não adicione informações que não estejam no documento."
-                )
-            else:
-                system_instruction = (
-                    "You are a smart document analyzer.\n"
-                    "Summarize the document below clearly and concisely.\n"
-                    "Do not add information that is not present in the document."
-                )
+            summary_stream = call_rhaiis_model_streaming(prompt)
 
             # Collect summary chunks
             summary_chunks = []
-
-            # -----------------------------
-            # Language-aware summarization prompt
-            # -----------------------------
-            prompt = f"""{system_instruction}
-
-            Document:
-            {doc['content'][:16000]}
-
-            Summary:"""
-
-            summary_stream = call_rhaiis_model_streaming(prompt)
 
             # Stream the summary content and collect it
             async for chunk in summary_stream:
@@ -366,7 +332,6 @@ async def stream_and_process_documents(
         error_msg = json.dumps({"event": "error", "message": str(e)})
         yield f"data: {error_msg}\n\n"
         print(f"Error in streaming: {e}")
-
 
 
 async def stream_rhaiis_response(prompt: str) -> AsyncGenerator[str, None]:
