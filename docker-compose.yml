@@ -50,7 +50,7 @@ services:
 
         if [ -d /home/dev/Spyre_Document_Summarizer/backend ]; then
           cd /home/dev/Spyre_Document_Summarizer/backend &&
-          uvicorn server:app --host 0.0.0.0 --port 8002 > /home/dev/Spyre_Document_Summarizer/logs/backend.log 2>&1 &
+          uvicorn server:app --host 0.0.0.0 --port 8002 --reload > /home/dev/Spyre_Document_Summarizer/logs/backend.log 2>&1 &
         else
           echo 'ERROR: backend directory not found' > /home/dev/Spyre_Document_Summarizer/logs/backend.log
         fi;
