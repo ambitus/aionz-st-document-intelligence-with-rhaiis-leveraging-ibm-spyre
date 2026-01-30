@@ -13,6 +13,8 @@ import time
 from typing import Any, AsyncGenerator, Generator, Optional
 
 import requests
+import time
+from typing import Dict, Any
 from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import PoolManager
 from urllib3.util.retry import Retry
@@ -40,6 +42,77 @@ class TLSAdapter(HTTPAdapter):
         return super().init_poolmanager(*args, **kwargs)
 
 
+class SimpleMetricsTracker:
+    """Simple metrics tracker for printing to logs"""
+
+    @staticmethod
+    def start_tracking(endpoint: str, **kwargs) -> Dict[str, Any]:
+        """Start tracking metrics for an endpoint"""
+        request_id = f"{endpoint}_{int(time.time() * 1000)}"
+        return {
+            "request_id": request_id,
+            "endpoint": endpoint,
+            "start_time": time.time(),
+            "first_token_time": None,
+            "tokens_received": 0,
+            "chars_received": 0,
+            "additional_info": kwargs
+        }
+
+    @staticmethod
+    def record_first_token(metrics: Dict[str, Any]):
+        """Record when first token is received"""
+        if metrics.get("first_token_time") is None:
+            metrics["first_token_time"] = time.time()
+
+    @staticmethod
+    def record_token_batch(metrics: Dict[str, Any], text: str):
+        """Record token batch received"""
+        metrics["chars_received"] += len(text)
+        # Simple token estimation (1 token ≈ 4 chars for English)
+        approx_tokens = max(1, len(text) // 4)
+        metrics["tokens_received"] += approx_tokens
+
+    @staticmethod
+    def complete_and_print(metrics: Dict[str, Any]):
+        """Complete tracking and print metrics to log"""
+        metrics["end_time"] = time.time()
+        metrics["total_time"] = metrics["end_time"] - metrics["start_time"]
+
+        if metrics["tokens_received"] > 0 and metrics["total_time"] > 0:
+            metrics["tokens_per_second"] = metrics["tokens_received"] / metrics["total_time"]
+            metrics["chars_per_second"] = metrics["chars_received"] / metrics["total_time"]
+
+        if metrics.get("first_token_time"):
+            metrics["time_to_first_token"] = metrics["first_token_time"] - metrics["start_time"]
+
+        # Print metrics in a clean format
+        print("\n" + "="*60)
+        print(f"PERFORMANCE METRICS - {metrics['endpoint']}")
+        print("="*60)
+        print(f"Request ID: {metrics['request_id']}")
+        print(f"Total time: {metrics['total_time']:.2f} seconds")
+
+        if metrics.get('time_to_first_token'):
+            print(f"Time to first token: {metrics['time_to_first_token']:.2f} seconds")
+
+        if metrics.get('tokens_per_second'):
+            print(f"Tokens received: {metrics['tokens_received']}")
+            print(f"Characters received: {metrics['chars_received']}")
+            print(f"Tokens per second: {metrics['tokens_per_second']:.2f}")
+            print(f"Characters per second: {metrics['chars_per_second']:.2f}")
+
+        # Print additional info if present
+        if metrics.get('additional_info'):
+            print("\nAdditional Info:")
+            for key, value in metrics['additional_info'].items():
+                print(f"  {key}: {value}")
+
+        print("="*60 + "\n")
+
+        return metrics
+
+
 def call_rhaiis_model_without_streaming(
     prompt: str,
     model: str = "ibm-granite/granite-3.3-8b-instruct",
@@ -50,7 +123,7 @@ def call_rhaiis_model_without_streaming(
 ) -> Any:
     """
     Call external RHAIIS API (HTTPS) to get a completion.
-    
+
     Includes retries, TLS 1.2 enforcement, timeout, and prompt truncation.
     Shows progress messages for each step.
     """
@@ -218,12 +291,16 @@ def call_rhaiis_model(
     yield response.json()
 
 
-async def call_rhaiis_model_streaming(prompt: str) -> AsyncGenerator[str, None]:
-    """Call RHAIIS API with streaming support - FIXED VERSION."""
+async def call_rhaiis_model_streaming(prompt: str, metrics: Dict[str, Any] = None) -> AsyncGenerator[str, None]:
+    """Call RHAIIS API with streaming support and metrics tracking."""
     import aiohttp
 
     url = f"{RHAIIS_API_BASE_URL}/v1/chat/completions"
     headers = {"Content-Type": "application/json"}
+
+    # Start metrics if not provided
+    if metrics is None:
+        metrics = SimpleMetricsTracker.start_tracking("rhaiis_inference", prompt_length=len(prompt))
 
     truncated_prompt = prompt[:MAX_PROMPT_LENGTH]
     print(f">>> Calling RHAIIS API with prompt length: {len(truncated_prompt)}")
@@ -239,6 +316,8 @@ async def call_rhaiis_model_streaming(prompt: str) -> AsyncGenerator[str, None]:
         "stream": True,
     }
 
+    first_token_received = False
+
     try:
         timeout = aiohttp.ClientTimeout(total=300)
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -250,11 +329,12 @@ async def call_rhaiis_model_streaming(prompt: str) -> AsyncGenerator[str, None]:
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
+                    print(f"Error: API returned status {response.status}: {error_text}")
                     yield f"Error: API returned status {response.status}: {error_text}"
                     return
-                
+
                 print(f">>> RHAIIS API response status: {response.status}")
-                
+
                 # Read the response as a stream
                 buffer = ""                
                 async for chunk_bytes in response.content.iter_any():
@@ -275,6 +355,8 @@ async def call_rhaiis_model_streaming(prompt: str) -> AsyncGenerator[str, None]:
 
                         if data_str == "[DONE]":
                             print("\n>>> [DONE]")
+                            # Print metrics after completion
+                            SimpleMetricsTracker.complete_and_print(metrics)
                             yield "[DONE]"
                             return
 
@@ -282,17 +364,28 @@ async def call_rhaiis_model_streaming(prompt: str) -> AsyncGenerator[str, None]:
                             data_json = json.loads(data_str)
                             delta = data_json["choices"][0]["delta"].get("content", "")
                             if delta:
+                                # Record first token time
+                                if not first_token_received:
+                                    SimpleMetricsTracker.record_first_token(metrics)
+                                    first_token_received = True
+
+                                # Record tokens
+                                SimpleMetricsTracker.record_token_batch(metrics, delta)
+
                                 print(delta, end="", flush=True)
                                 yield delta
                         except Exception as e:
                             print(f"JSON error: {e} | data: {data_str}")
-                
+
                 # Handle any remaining data in buffer
                 if buffer.strip():
                     yield f"Error: Incomplete response data: {buffer}"
 
     except asyncio.TimeoutError:
+        print("Error: Request timeout")
+        SimpleMetricsTracker.complete_and_print(metrics)
         yield "Error: Request timeout"
     except Exception as e:
-        yield f"Error: {str(e)}"
         print(f"Error in RHAIIS API call: {e}")
+        SimpleMetricsTracker.complete_and_print(metrics)
+        yield f"Error: {str(e)}"

@@ -10,17 +10,22 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Tuple
+import base64
+from io import BytesIO
+import os
 
 from bson import ObjectId
 from pymongo import MongoClient
 from rouge_score import rouge_scorer
 from tqdm import tqdm
+from PIL import Image
 
 from config import EMBEDDING_MODEL, MONGO_DB_HOST
 from opensearch_utils import (
     ingest_code_to_os,
     get_os_connection,
     create_os_vectorstore,
+    ImageRAG
 )
 
 # Configure logging
@@ -100,7 +105,7 @@ def get_or_create_user_collection(mongo_db: MongoClient, user_id: str) -> Any:
       1. If exists in MongoDB but missing in OpenSearch → auto-create OS index.
       2. If exists in OpenSearch but missing in MongoDB → create MongoDB collection.
       3. If neither exists → create both.
-      4. If both exist → return existing collection.
+      4. If both exists → return existing collection.
     
     Args:
         mongo_db: MongoDB client instance
@@ -258,7 +263,8 @@ def ingest_documents_to_mongodb_and_opensearch(
                 "doc_content": doc_content,
                 "doc_summary": doc_summary,
                 "uploaded_at": datetime.now().isoformat(),
-                "Rouge_Score": scores
+                "Rouge_Score": scores,
+                "is_image": doc_data.get("is_image", False)
             }
             
             # Insert into MongoDB
@@ -269,25 +275,222 @@ def ingest_documents_to_mongodb_and_opensearch(
                 logger.error(f"Error inserting into MongoDB: {e}")
                 continue
             
-            # Ingest to OpenSearch
-            try:
-                os_doc = [{
-                    "filename": doc_name,
-                    "text": doc_content
-                }]
-                
-                logger.debug(f"Preparing to ingest to OpenSearch: {doc_name} (content length: {len(doc_content)})")
-                ingest_code_to_os(os_doc, EMBEDDING_MODEL, collection_name)
-                logger.debug(f"Ingested '{doc_name}' to OpenSearch")
-            except Exception as e:
-                logger.error(f"Error ingesting to OpenSearch: {e}")
-                # Continue even if OpenSearch fails
-                continue
+            # Ingest to OpenSearch (only for non-image documents)
+            if not doc_data.get("is_image", False):
+                try:
+                    os_doc = [{
+                        "filename": doc_name,
+                        "text": doc_content
+                    }]
+                    
+                    logger.debug(f"Preparing to ingest to OpenSearch: {doc_name} (content length: {len(doc_content)})")
+                    ingest_code_to_os(os_doc, EMBEDDING_MODEL, collection_name)
+                    logger.debug(f"Ingested '{doc_name}' to OpenSearch")
+                except Exception as e:
+                    logger.error(f"Error ingesting to OpenSearch: {e}")
+                    # Continue even if OpenSearch fails
+                    continue
         
         logger.info(f"Completed ingestion of {len(docs_with_summaries)} documents for user {user_id}")
         
     except Exception as e:
         logger.error(f"Critical error in ingestion: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+async def ingest_images_to_mongodb_and_opensearch(
+    images_data: List[Dict], 
+    user_id: str
+) -> Optional[Any]:
+    """
+    Background task to ingest images to MongoDB and OpenSearch ImageRAG index.
+    
+    Args:
+        images_data: List of image data dictionaries
+        user_id: User identifier
+        
+    Returns:
+        Result of ingestion process
+    """
+    try:
+        logger.info(f"Starting background image ingestion for user {user_id}")
+        logger.debug(f"Received {len(images_data) if images_data else 0} images")
+        
+        if not images_data:
+            logger.warning("No images to process")
+            return None
+        
+        # Run in thread pool to avoid blocking the event loop
+        result = await asyncio.get_event_loop().run_in_executor(
+            executor,
+            lambda: _ingest_images_sync(images_data, user_id)
+        )
+        
+        logger.info(f"Background image ingestion completed for user {user_id}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in background image ingestion setup: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+def _ingest_images_sync(images_data: List[Dict], user_id: str) -> Dict[str, Any]:
+    """
+    Synchronous function to ingest images to MongoDB and OpenSearch.
+    """
+    try:
+        logger.info(f"Starting MongoDB/OpenSearch image ingestion for {len(images_data)} images")
+        
+        # Connect to MongoDB
+        mongo_db = mongo_db_connection()
+        
+        # Create user-specific collection
+        collection_name = f"user_{user_id}".lower()
+        document_index_name = collection_name  # This is the regular document index
+        collection = get_or_create_user_collection(mongo_db, collection_name)
+        
+        # Initialize ImageRAG
+        image_rag = ImageRAG()
+        image_index_name = f"user_{user_id}_images".lower()
+        
+        # Create image-specific index if it doesn't exist
+        image_rag.create_image_index(image_index_name, drop_existing=False)
+        
+        results = {
+            "successful": 0,
+            "failed": 0,
+            "errors": []
+        }
+        
+        # Process images with progress bar
+        for i, img_data in enumerate(tqdm(images_data, desc="Ingesting images")):
+            filename = img_data.get("filename", f"unknown_image_{i}")
+            image_data = img_data.get("image_data", {})
+            caption = img_data.get("caption")  # Get pre-generated caption
+            
+            try:
+                # First, save image temporarily to process with ImageRAG
+                temp_image_path = f"/tmp/{filename}"
+                
+                # Decode base64 and save to temp file
+                base64_content = image_data.get("base64_content", "")
+                if base64_content:
+                    image_bytes = base64.b64decode(base64_content)
+                    with open(temp_image_path, "wb") as f:
+                        f.write(image_bytes)
+                    
+                    # If we don't have a caption from streaming, generate one
+                    if not caption:
+                        caption = image_rag.generate_image_caption(temp_image_path)
+                    
+                    # Extract embedding
+                    embedding = image_rag.extract_image_embedding(temp_image_path)
+                    
+                    # Prepare image document for image index
+                    image = Image.open(temp_image_path)
+                    image_doc = {
+                        "image_vector": embedding.tolist(),
+                        "image_path": temp_image_path,
+                        "filename": filename,
+                        "caption": caption,
+                        "metadata": {
+                            "width": image.width,
+                            "height": image.height,
+                            "format": image.format,
+                            "size_bytes": os.path.getsize(temp_image_path),
+                        },
+                        "timestamp": datetime.now().isoformat(),
+                        "user_id": user_id
+                    }
+                    
+                    # Index in OpenSearch image index
+                    doc_id = f"{user_id}_{filename}"
+                    es_client = get_os_connection()
+                    response = es_client.index(
+                        index=image_index_name,
+                        body=image_doc,
+                        id=doc_id,
+                        refresh=True
+                    )
+                    
+                    # Also index the caption in the regular document index
+                    try:
+                        # Create a document-like entry for the image
+                        doc_entry = [{
+                            "filename": filename,
+                            "text": f"Image description: {caption}"
+                        }]
+                        
+                        from opensearch_utils import ingest_code_to_os
+                        ingest_code_to_os(
+                            docs=doc_entry,
+                            model_name=EMBEDDING_MODEL,
+                            index_name=document_index_name
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to index image description in document index: {e}")
+                    
+                    # Create MongoDB document for the image
+                    document = {
+                        "doc_name": filename,
+                        "doc_content": caption,
+                        "doc_summary": caption,
+                        "uploaded_at": datetime.now().isoformat(),
+                        "Rouge_Score": {"rouge1": 0, "rouge2": 0, "rougeL": 0},
+                        "is_image": True,
+                        "image_metadata": {
+                            "width": image_data.get("width", 0),
+                            "height": image_data.get("height", 0),
+                            "format": image_data.get("format", "unknown"),
+                            "content_type": image_data.get("content_type", "image/unknown"),
+                            "size_bytes": image_data.get("size_bytes", 0)
+                        },
+                        "caption": caption
+                    }
+                    
+                    # Check for existing document
+                    existing = collection.find_one({"doc_name": filename})
+                    if existing:
+                        logger.info(f"Skipping duplicate image '{filename}' for user '{user_id}'")
+                    else:
+                        # Insert into MongoDB
+                        result = collection.insert_one(document)
+                        logger.debug(f"Added image '{filename}' to MongoDB with ID: {result.inserted_id}")
+                        results["successful"] += 1
+                    
+                    # Clean up temp file
+                    try:
+                        os.remove(temp_image_path)
+                    except:
+                        pass
+                    
+                else:
+                    error_msg = f"No image content for '{filename}'"
+                    logger.error(error_msg)
+                    results["failed"] += 1
+                    results["errors"].append({
+                        "filename": filename,
+                        "error": error_msg
+                    })
+                    
+            except Exception as e:
+                error_msg = f"Error processing image '{filename}': {str(e)}"
+                logger.error(error_msg)
+                results["failed"] += 1
+                results["errors"].append({
+                    "filename": filename,
+                    "error": error_msg
+                })
+        
+        logger.info(f"Completed image ingestion: {results['successful']} successful, {results['failed']} failed")
+        return results
+        
+    except Exception as e:
+        logger.error(f"Critical error in image ingestion: {e}")
         import traceback
         traceback.print_exc()
         raise
@@ -333,7 +536,7 @@ async def delete_from_mongodb(user_id: str, filename: str) -> bool:
         raise
 
 
-# Export public API
+# Export public API - added new image ingestion function
 __all__ = [
     "mongo_db_connection",
     "convert_mongo_doc",
@@ -341,5 +544,6 @@ __all__ = [
     "get_or_create_user_collection",
     "ingest_documents_with_summaries_in_background",
     "ingest_documents_to_mongodb_and_opensearch",
+    "ingest_images_to_mongodb_and_opensearch",  # NEW
     "delete_from_mongodb",
 ]

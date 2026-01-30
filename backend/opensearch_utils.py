@@ -5,11 +5,16 @@ This module provides functionality for:
 - Creating and managing OpenSearch vector stores
 - Ingesting and retrieving documents with embeddings
 - Performing semantic search with smart fallback strategies
+- Image RAG: Image embedding, captioning, and multimodal search
 """
 
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Tuple
+from PIL import Image
+import torch
+import numpy as np
+import os
 
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.schema import Document
@@ -450,12 +455,508 @@ def remove_duplicate_chunks(documents: List[Document]) -> List[Document]:
     return unique_docs
 
 
-# Export public API
+def ingest_image_description_to_os(
+    image_filename: str,
+    caption: str,
+    index_name: str,
+    user_id: str
+) -> None:
+    """
+    Ingest image description/caption into the regular OpenSearch document index.
+
+    This allows image descriptions to be retrieved alongside text documents.
+
+    Args:
+        image_filename: Name of the image file
+        caption: Generated image caption/description
+        index_name: OpenSearch index name (e.g., "user_vishwasr")
+        user_id: User identifier
+    """
+    try:
+        logger.info(f"Ingesting image description for '{image_filename}' into index '{index_name}'")
+
+        # Create a document-like entry for the image
+        doc = [{
+            "filename": image_filename,
+            "text": f"Image description: {caption}"
+        }]
+
+        # Use the existing ingest_code_to_os function
+        ingest_code_to_os(
+            docs=doc,
+            model_name=EMBEDDING_MODEL,
+            index_name=index_name
+        )
+
+        logger.info(f"Successfully ingested image description for '{image_filename}'")
+
+    except Exception as e:
+        logger.error(f"Failed to ingest image description for '{image_filename}': {e}")
+        raise
+
+
+# ============================================================================
+# IMAGE RAG FUNCTIONS
+# ============================================================================
+
+class ImageRAG:
+    """
+    Image Retrieval-Augmented Generation using OpenSearch and CLIP/BLIP models.
+    """
+
+    def __init__(
+        self,
+        clip_model_name: str = "openai/clip-vit-base-patch32",
+        caption_model_name: str = "Salesforce/blip-image-captioning-base",
+        device: Optional[str] = None
+    ):
+        """
+        Initialize Image RAG with CLIP for embeddings and BLIP for captioning.
+
+        Args:
+            clip_model_name: HuggingFace model name for CLIP
+            caption_model_name: HuggingFace model name for captioning
+            device: Device to run models on ('cuda' or 'cpu')
+        """
+        import torch
+        from transformers import (
+            CLIPProcessor, CLIPModel,
+            BlipProcessor, BlipForConditionalGeneration
+        )
+
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+
+        logger.info(f"Loading CLIP model: {clip_model_name}")
+        self.clip_model = CLIPModel.from_pretrained(clip_model_name).to(self.device)
+        self.clip_processor = CLIPProcessor.from_pretrained(clip_model_name)
+
+        logger.info(f"Loading caption model: {caption_model_name}")
+        self.caption_processor = BlipProcessor.from_pretrained(caption_model_name)
+        self.caption_model = BlipForConditionalGeneration.from_pretrained(caption_model_name).to(self.device)
+
+        # Get embedding dimension from CLIP model
+        self.embedding_dim = self.clip_model.config.projection_dim
+        logger.info(f"Image embedding dimension: {self.embedding_dim}")
+
+
+    def extract_image_embedding(self, image_path: str) -> np.ndarray:
+        """
+        Extract CLIP embeddings from an image file.
+
+        Args:
+            image_path: Path to the image file
+
+        Returns:
+            np.ndarray: Image embedding vector
+        """
+        try:
+            image = Image.open(image_path).convert("RGB")
+            inputs = self.clip_processor(images=image, return_tensors="pt").to(self.device)
+
+            with torch.no_grad():
+                image_features = self.clip_model.get_image_features(**inputs)
+
+            # Normalize the embedding
+            embedding = image_features.cpu().numpy().flatten()
+            embedding = embedding / np.linalg.norm(embedding)
+            return embedding
+
+        except Exception as e:
+            logger.error(f"Error extracting embedding from {image_path}: {e}")
+            raise
+
+
+    def extract_text_embedding(self, text: str) -> np.ndarray:
+        """
+        Extract CLIP embeddings from text.
+
+        Args:
+            text: Input text
+
+        Returns:
+            np.ndarray: Text embedding vector
+        """
+        try:
+            inputs = self.clip_processor(text=[text], return_tensors="pt", padding=True).to(self.device)
+
+            with torch.no_grad():
+                text_features = self.clip_model.get_text_features(**inputs)
+
+            # Normalize the embedding
+            embedding = text_features.cpu().numpy().flatten()
+            embedding = embedding / np.linalg.norm(embedding)
+            return embedding
+
+        except Exception as e:
+            logger.error(f"Error extracting text embedding: {e}")
+            raise
+
+
+    def generate_image_caption(self, image_path: str) -> str:
+        """
+        Generate descriptive caption for an image.
+
+        Args:
+            image_path: Path to the image file
+
+        Returns:
+            str: Generated caption
+        """
+        try:
+            image = Image.open(image_path).convert("RGB")
+            inputs = self.caption_processor(image, return_tensors="pt").to(self.device)
+
+            with torch.no_grad():
+                out = self.caption_model.generate(**inputs, max_length=50)
+
+            caption = self.caption_processor.decode(out[0], skip_special_tokens=True)
+            return caption
+
+        except Exception as e:
+            logger.error(f"Error generating caption for {image_path}: {e}")
+            return ""
+
+
+    def create_image_index(
+        self,
+        index_name: str,
+        drop_existing: bool = False,
+        es_client: Optional[OpenSearch] = None
+    ) -> bool:
+        """
+        Create OpenSearch index optimized for image vectors.
+
+        Args:
+            index_name: Name of the index to create
+            drop_existing: Whether to delete existing index
+            es_client: Optional existing OpenSearch client
+
+        Returns:
+            bool: True if index was created successfully
+        """
+        if es_client is None:
+            es_client = get_os_connection()
+
+        # Check if index exists
+        if es_client.indices.exists(index=index_name):
+            if drop_existing:
+                logger.info(f"Dropping existing index: {index_name}")
+                es_client.indices.delete(index=index_name)
+            else:
+                logger.info(f"Index '{index_name}' already exists")
+                return True
+
+        # Define index mapping with k-NN support for image vectors
+        index_body = {
+            "settings": {
+                "index": {
+                    "knn": True,
+                    "knn.algo_param.ef_search": 100,
+                    "number_of_shards": 2,
+                    "number_of_replicas": 1
+                }
+            },
+            "mappings": {
+                "properties": {
+                    "image_vector": {
+                        "type": "knn_vector",
+                        "dimension": self.embedding_dim,
+                        "method": {
+                            "name": "hnsw",
+                            "space_type": "cosinesimil",
+                            "engine": "nmslib",
+                            "parameters": {
+                                "ef_construction": 128,
+                                "m": 16
+                            }
+                        }
+                    },
+                    "image_path": {"type": "keyword"},
+                    "filename": {"type": "keyword"},
+                    "caption": {"type": "text"},
+                    "metadata": {
+                        "type": "object",
+                        "properties": {
+                            "width": {"type": "integer"},
+                            "height": {"type": "integer"},
+                            "format": {"type": "keyword"},
+                            "size_bytes": {"type": "long"}
+                        }
+                    },
+                    "timestamp": {"type": "date"},
+                    "user_id": {"type": "keyword"}
+                }
+            }
+        }
+
+        try:
+            es_client.indices.create(index=index_name, body=index_body)
+            logger.info(f"Created image index '{index_name}' with k-NN support")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to create index '{index_name}': {e}")
+            raise
+
+
+    def get_all_embeddings_for_image(
+        self,
+        index_name: str,
+        image_filename: str,
+        user_id: Optional[str] = None,
+        es_client: Optional[OpenSearch] = None
+    ) -> List[Dict]:
+        """
+        Get all embeddings/chunks for a specific image by filename.
+
+        Args:
+            index_name: OpenSearch index name
+            image_filename: Name of the image file
+            user_id: Optional user ID filter
+            es_client: Optional OpenSearch client
+
+        Returns:
+            List[Dict]: All embeddings for the specified image
+        """
+        if es_client is None:
+            es_client = get_os_connection()
+
+        try:
+            # Build search query to find ALL documents for this image
+            search_body = {
+                "size": 100,  # Get up to 100 embeddings for this image
+                "query": {
+                    "bool": {
+                        "must": [
+                            {"term": {"filename.keyword": image_filename}}
+                        ],
+                        "filter": []
+                    }
+                },
+                "_source": ["filename", "caption", "image_path", "metadata", "timestamp"],
+                "sort": [{"_score": {"order": "desc"}}]
+            }
+
+            # Add user filter if provided
+            if user_id:
+                search_body["query"]["bool"]["filter"].append(
+                    {"term": {"user_id": user_id}}
+                )
+
+            # Execute search
+            response = es_client.search(
+                index=index_name,
+                body=search_body
+            )
+
+            # Format results
+            results = []
+            for hit in response["hits"]["hits"]:
+                result = {
+                    "score": hit["_score"],
+                    "doc_id": hit["_id"],
+                    **hit["_source"]
+                }
+                results.append(result)
+
+            logger.info(f"Found {len(results)} embeddings for image '{image_filename}'")
+            return results
+
+        except Exception as e:
+            logger.error(f"Error getting embeddings for image '{image_filename}': {e}")
+            return []
+
+
+    def search_images(
+        self,
+        query: str,
+        index_name: str,
+        k: int = 5,
+        filters: Optional[Dict] = None,
+        user_id: Optional[str] = None,
+        es_client: Optional[OpenSearch] = None
+    ) -> List[Dict]:
+        """
+        Search for images using text query.
+
+        Args:
+            query: Text search query
+            index_name: OpenSearch index name
+            k: Number of results to return
+            filters: Optional filters
+            user_id: Optional user ID filter
+            es_client: Optional OpenSearch client
+
+        Returns:
+            List[Dict]: Search results with scores and metadata
+        """
+        if es_client is None:
+            es_client = get_os_connection()
+
+        try:
+            # Get text embedding for query
+            query_embedding = self.extract_text_embedding(query)
+            
+            # Build search query
+            search_body = {
+                "size": k,
+                "query": {
+                    "bool": {
+                        "must": [],
+                        "filter": []
+                    }
+                },
+                "_source": ["filename", "caption", "image_path", "metadata", "timestamp"]
+            }
+
+            # Add k-NN search
+            knn_query = {
+                "knn": {
+                    "image_vector": {
+                        "vector": query_embedding.tolist(),
+                        "k": k
+                    }
+                }
+            }
+
+            # Combine with text search for hybrid approach
+            search_body["query"]["bool"]["must"].append(knn_query)
+
+            # Add optional text match on caption
+            search_body["query"]["bool"]["should"] = [
+                {"match": {"caption": {"query": query, "boost": 0.5}}}
+            ]
+
+            # Add filters
+            if user_id:
+                search_body["query"]["bool"]["filter"].append(
+                    {"term": {"user_id": user_id}}
+                )
+
+            if filters:
+                for key, value in filters.items():
+                    search_body["query"]["bool"]["filter"].append(
+                        {"term": {key: value}}
+                    )
+
+            # Execute search
+            response = es_client.search(
+                index=index_name,
+                body=search_body
+            )
+
+            # Format results
+            results = []
+            for hit in response["hits"]["hits"]:
+                result = {
+                    "score": hit["_score"],
+                    "doc_id": hit["_id"],
+                    **hit["_source"]
+                }
+                results.append(result)
+
+            logger.info(f"Image search returned {len(results)} results")
+            return results
+
+        except Exception as e:
+            logger.error(f"Error in image search: {e}")
+            return []
+
+
+    def delete_image(
+        self,
+        index_name: str,
+        doc_id: Optional[str] = None,
+        image_path: Optional[str] = None,
+        user_id: Optional[str] = None,
+        es_client: Optional[OpenSearch] = None
+    ) -> bool:
+        """
+        Delete an image from OpenSearch.
+
+        Args:
+            index_name: OpenSearch index name
+            doc_id: Direct document ID to delete
+            image_path: Image file path to delete
+            user_id: User ID for filtering
+            es_client: Optional OpenSearch client
+
+        Returns:
+            bool: True if deleted successfully
+        """
+        if es_client is None:
+            es_client = get_os_connection()
+
+        try:
+            if doc_id:
+                # Delete by direct ID
+                response = es_client.delete(
+                    index=index_name,
+                    id=doc_id,
+                    refresh=True
+                )
+                deleted = response.get("result") == "deleted"
+
+            elif image_path:
+                # Build query to find by image path
+                query = {
+                    "query": {
+                        "term": {"image_path.keyword": image_path}
+                    }
+                }
+
+                if user_id:
+                    query["query"] = {
+                        "bool": {
+                            "must": [
+                                {"term": {"image_path.keyword": image_path}},
+                                {"term": {"user_id": user_id}}
+                            ]
+                        }
+                    }
+
+                # Search and delete
+                search_response = es_client.search(
+                    index=index_name,
+                    body=query,
+                    size=100
+                )
+
+                deleted = False
+                for hit in search_response["hits"]["hits"]:
+                    delete_response = es_client.delete(
+                        index=index_name,
+                        id=hit["_id"],
+                        refresh=True
+                    )
+                    if delete_response.get("result") == "deleted":
+                        deleted = True
+                        logger.debug(f"Deleted image document: {hit['_id']}")
+            
+            else:
+                logger.error("Either doc_id or image_path must be provided")
+                return False
+
+            if deleted:
+                logger.info(f"Deleted image from index '{index_name}'")
+            else:
+                logger.warning(f"Image not found in index '{index_name}'")
+
+            return deleted
+
+        except Exception as e:
+            logger.error(f"Error deleting image: {e}")
+            return False
+
+
+# Export public API - added ImageRAG and answer_question_about_image
 __all__ = [
     "get_os_connection",
     "create_os_vectorstore",
     "get_retriever_os",
     "ingest_code_to_os",
+    "ingest_image_description_to_os",
     "delete_from_opensearch",
     "retrieve_with_smart_fallback",
+    "ImageRAG",
+    "answer_question_about_image",
 ]
