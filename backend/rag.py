@@ -24,6 +24,9 @@ def build_rag_prompt(question: str, chunks: List[Document], image_context: str =
     - French
     - Portuguese
     - Hindi
+    - German
+    - Italian
+    - Greek
     
     Args:
         question: The user's question
@@ -93,13 +96,37 @@ def build_rag_prompt(question: str, chunks: List[Document], image_context: str =
             "संदर्भ में दस्तावेज़ अंश और/या छवि विवरण शामिल हैं।\n"
             "यदि उत्तर संदर्भ में नहीं है, तो स्पष्ट रूप से बताएं।"
         )
+    elif language == "de":
+        system_instruction = (
+           "Sie sind ein erfahrener Assistent.\n"
+            "Antworten Sie ausschließlich auf Deutsch.\n"
+            "Verwenden Sie nur die Informationen, die im untenstehenden Kontext verfügbar sind.\n"
+            "Der Kontext umfasst Dokumentenauszüge und/oder Bildbeschreibungen.\n"
+            "Sollte die Antwort nicht im Kontext enthalten sein, geben Sie dies deutlich an.\n"
+        )
+    elif language == "it":
+        system_instruction = (
+            "Sei un assistente esperto.\n"
+            "Rispondi solo in italiano.\n"
+            "Utilizza esclusivamente le informazioni disponibili nel contesto fornito di seguito.\n"
+            "Il contesto include estratti di documenti e/o descrizioni di immagini.\n"
+            "Se la risposta non è presente nel contesto, indicalo chiaramente.\n"
+        )
+    elif language == "el":
+        system_instruction = (
+            "Είστε ειδικός βοηθός.\n"
+            "Απαντήστε μόνο στα Ελληνικά.\n"
+            "Χρησιμοποιήστε μόνο τις πληροφορίες που είναι διαθέσιμες στο παρακάτω πλαίσιο.\n"
+            "Το πλαίσιο περιλαμβάνει αποσπάσματα εγγράφων ή/και περιγραφές εικόνων.\n"
+            "Εάν η απάντηση δεν περιλαμβάνεται στο πλαίσιο, δηλώστε το σαφώς.\n"
+        )
     else:
         system_instruction = (
             "You are a smart document analyzer.\n"
             "Answer the question using ONLY the Context provided.\n"
             "The context includes document excerpts and/or image descriptions.\n"
             "If the answer is not in the context, say so clearly.\n"
-            "When referring to images, mention which image you are referring to."
+            "When referring to images, mention which image you are referring to.\n"
         )
 
     # ---- Final prompt ----
@@ -157,6 +184,27 @@ def build_summarize_prompt(doc):
             "नीचे दिए गए दस्तावेज़ का सारांश केवल हिंदी में प्रस्तुत करें।\n"
             "सार स्पष्ट, संक्षिप्त और दस्तावेज़ की जानकारी पर आधारित होना चाहिए।\n"
             "दस्तावेज़ में न होने वाली कोई जानकारी न जोड़ें।"
+        )
+    elif language == "de":
+        system_instruction = (
+            "Sie sind ein kompetenter Assistent.\n"
+            "Fassen Sie das untenstehende Dokument ausschließlich auf Deutsch zusammen.\n"
+            "Formulieren Sie klar, prägnant und inhaltlich getreu.\n"
+            "Fügen Sie keine Informationen hinzu, die nicht im Dokument enthalten sind.\n"
+        )
+    elif language == "it":
+        system_instruction = (
+            "Sei un assistente esperto.\n"
+            "Riassumi il documento seguente esclusivamente in italiano.\n"
+            "Sii chiaro, conciso e fedele al contenuto.\n"
+            "Non aggiungere informazioni non presenti nel documento.\n"
+        )
+    elif language == "el":
+        system_instruction = (
+            "Είστε ένας έμπειρος βοηθός.\n"
+            "Συνοψίστε το παρακάτω έγγραφο μόνο στα Ελληνικά.\n"
+            "Να είστε σαφής, συνοπτικός και πιστός στο περιεχόμενο.\n"
+            "Μην προσθέτετε πληροφορίες που δεν υπάρχουν στο έγγραφο.\n"
         )
     else:
         system_instruction = (
@@ -219,6 +267,30 @@ def build_image_only_prompt(question: str, image_context: str) -> str:
             "संदर्भ में दी गई छवि विवरणों का ही उपयोग करें।\n"
             "यदि उत्तर छवि विवरणों में नहीं है, तो स्पष्ट रूप से बताएं।\n"
             "विशिष्ट छवियों का उल्लेख करते समय, बताएं कि आप किस छवि का उल्लेख कर रहे हैं।"
+        )
+    elif language == "de":
+        system_instruction = (
+           "Sie sind ein Fachassistent, der Fragen zu Bildern beantwortet.\n"
+           "Bitte antworten Sie nur auf Deutsch.\n"
+           "Verwenden Sie ausschließlich die im Kontext bereitgestellten Bildbeschreibungen.\n"
+           "Falls die Antwort nicht in den Bildbeschreibungen enthalten ist, geben Sie dies bitte deutlich an.\n"
+           "Wenn Sie sich auf bestimmte Bilder beziehen, nennen Sie bitte das jeweilige Bild.\n"
+        )
+    elif language == "it":
+        system_instruction = (
+           "Sei un assistente qualificato che risponde a domande sulle immagini.\n"
+            "Rispondi solo in italiano.\n"
+            "Utilizza solo le descrizioni delle immagini fornite nel contesto.\n"
+            "Se la risposta non è presente nelle descrizioni delle immagini, indicalo chiaramente.\n"
+            "Quando fai riferimento a immagini specifiche, indica a quale immagine ti riferisci.\n"
+        )
+    elif language == "el":
+        system_instruction = (
+            "Είστε ένας εξειδικευμένος βοηθός που απαντά σε ερωτήσεις σχετικά με εικόνες.\n"
+            "Απαντήστε μόνο στα Ελληνικά.\n"
+            "Χρησιμοποιήστε μόνο τις περιγραφές εικόνων που παρέχονται στα συμφραζόμενα.\n"
+            "Εάν η απάντηση δεν περιλαμβάνεται στις περιγραφές εικόνων, δηλώστε το με σαφήνεια.\n"
+            "Όταν αναφέρεστε σε συγκεκριμένες εικόνες, υποδείξτε σε ποια εικόνα γίνεται αναφορά.\n"
         )
     else:
         system_instruction = (
