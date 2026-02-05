@@ -501,43 +501,78 @@ def ingest_image_description_to_os(
 
 class ImageRAG:
     """
-    Image Retrieval-Augmented Generation using OpenSearch and CLIP/BLIP models.
+    Image Retrieval-Augmented Generation using OpenSearch and Granite Vision 3.3-2b, CLIP/BLIP models.
     """
 
     def __init__(
         self,
         clip_model_name: str = "openai/clip-vit-base-patch32",
         caption_model_name: str = "Salesforce/blip-image-captioning-base",
+        granite_model_name: str = "ibm-granite/granite-vision-3.3-2b",
         device: Optional[str] = None
     ):
         """
-        Initialize Image RAG with CLIP for embeddings and BLIP for captioning.
-
-        Args:
-            clip_model_name: HuggingFace model name for CLIP
-            caption_model_name: HuggingFace model name for captioning
-            device: Device to run models on ('cuda' or 'cpu')
+        Initialize Image RAG with CLIP for embeddings.
+        Tries Granite Vision for captioning, falls back to BLIP.
         """
         import torch
         from transformers import (
-            CLIPProcessor, CLIPModel,
-            BlipProcessor, BlipForConditionalGeneration
+            CLIPProcessor, CLIPModel
         )
 
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
+        # Load CLIP for embeddings (always works)
         logger.info(f"Loading CLIP model: {clip_model_name}")
         self.clip_model = CLIPModel.from_pretrained(clip_model_name).to(self.device)
         self.clip_processor = CLIPProcessor.from_pretrained(clip_model_name)
 
-        logger.info(f"Loading caption model: {caption_model_name}")
-        self.caption_processor = BlipProcessor.from_pretrained(caption_model_name)
-        self.caption_model = BlipForConditionalGeneration.from_pretrained(caption_model_name).to(self.device)
+        # Try to load Granite Vision first
+        self.caption_model = None
+        self.caption_processor = None
+        granite_loaded = False
+
+        try:
+            logger.info("Attempting to load Granite Vision model...")
+
+            # Try with trust_remote_code for Granite
+            from transformers import AutoModelForCausalLM, AutoProcessor
+
+            self.caption_model = AutoModelForCausalLM.from_pretrained(
+                granite_model_name,
+                trust_remote_code=True,
+                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32
+            ).to(self.device)
+
+            self.caption_processor = AutoProcessor.from_pretrained(
+                granite_model_name,
+                trust_remote_code=True
+            )
+
+            granite_loaded = True
+            logger.info("Successfully loaded Granite Vision model")
+
+        except Exception:
+            # Silently fall back to BLIP (original model)
+            logger.info("Granite Vision not available, using BLIP model")
+
+        # If Granite failed, load BLIP (the original model)
+        if not granite_loaded:
+            try:
+                from transformers import BlipProcessor, BlipForConditionalGeneration
+
+                self.caption_processor = BlipProcessor.from_pretrained(caption_model_name)
+                self.caption_model = BlipForConditionalGeneration.from_pretrained(
+                    caption_model_name
+                ).to(self.device)
+
+            except Exception as e:
+                logger.error(f"Failed to load BLIP model: {e}")
+                raise
 
         # Get embedding dimension from CLIP model
         self.embedding_dim = self.clip_model.config.projection_dim
         logger.info(f"Image embedding dimension: {self.embedding_dim}")
-
 
     def extract_image_embedding(self, image_path: str) -> np.ndarray:
         """
@@ -565,7 +600,6 @@ class ImageRAG:
             logger.error(f"Error extracting embedding from {image_path}: {e}")
             raise
 
-
     def extract_text_embedding(self, text: str) -> np.ndarray:
         """
         Extract CLIP embeddings from text.
@@ -591,10 +625,10 @@ class ImageRAG:
             logger.error(f"Error extracting text embedding: {e}")
             raise
 
-
     def generate_image_caption(self, image_path: str) -> str:
         """
         Generate descriptive caption for an image.
+        Uses Granite Vision if available, otherwise BLIP.
 
         Args:
             image_path: Path to the image file
@@ -604,18 +638,40 @@ class ImageRAG:
         """
         try:
             image = Image.open(image_path).convert("RGB")
-            inputs = self.caption_processor(image, return_tensors="pt").to(self.device)
 
-            with torch.no_grad():
-                out = self.caption_model.generate(**inputs, max_length=50)
+            # Check if we're using Granite Vision (has trust_remote_code attribute)
+            if hasattr(self.caption_model.config, 'model_type') and 'granite' in self.caption_model.config.model_type.lower():
+                # Granite Vision processing
+                prompt = "<image>\nDescribe this image in detail:"
+                inputs = self.caption_processor(
+                    text=prompt,
+                    images=image,
+                    return_tensors="pt"
+                ).to(self.device)
 
-            caption = self.caption_processor.decode(out[0], skip_special_tokens=True)
+                with torch.no_grad():
+                    out = self.caption_model.generate(**inputs, max_new_tokens=100)
+
+                caption = self.caption_processor.decode(out[0], skip_special_tokens=True)
+
+                # Clean up the prompt from the response
+                if prompt in caption:
+                    caption = caption.replace(prompt, "").strip()
+
+            else:
+                # BLIP processing (original code)
+                inputs = self.caption_processor(image, return_tensors="pt").to(self.device)
+
+                with torch.no_grad():
+                    out = self.caption_model.generate(**inputs, max_length=50)
+
+                caption = self.caption_processor.decode(out[0], skip_special_tokens=True)
+
             return caption
 
         except Exception as e:
             logger.error(f"Error generating caption for {image_path}: {e}")
             return ""
-
 
     def create_image_index(
         self,
@@ -697,7 +753,6 @@ class ImageRAG:
             logger.error(f"Failed to create index '{index_name}': {e}")
             raise
 
-
     def get_all_embeddings_for_image(
         self,
         index_name: str,
@@ -764,7 +819,6 @@ class ImageRAG:
         except Exception as e:
             logger.error(f"Error getting embeddings for image '{image_filename}': {e}")
             return []
-
 
     def search_images(
         self,
@@ -860,7 +914,6 @@ class ImageRAG:
         except Exception as e:
             logger.error(f"Error in image search: {e}")
             return []
-
 
     def delete_image(
         self,
