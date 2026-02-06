@@ -4,16 +4,53 @@ RAG (Retrieval-Augmented Generation) pipeline utilities.
 This module provides prompt engineering and construction utilities for
 building effective RAG-based question answering systems.
 """
-
 import logging
 from typing import List, Optional, Union, Any, Dict
 
 from langchain.schema import Document
-from utils import detect_language
+from utils import detect_language_with_confidence
+
+from langchain.tools import tool
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Language Detection output schema
+class LanguageDecision(BaseModel):
+    user_language: str
+    confidence: float
+    is_mixed: bool
+    retrieval_languages: List[str]
+    answer_language: str
+
+
+@tool
+def language_detection_tool(query: str) -> dict:
+    """
+    Detect the language of a user query and return routing metadata.
+    """
+    detections = detect_language_with_confidence(query)
+
+    primary = detections[0]
+    user_language = primary["lang"]
+    confidence = round(primary["prob"], 2)
+
+    # Check if there is a significant second language
+    is_mixed = len(detections) > 1 and detections[1]["prob"] > 0.40
+
+    # Include all languages with reasonable probability for retrieval
+    retrieval_languages = [d["lang"] for d in detections if d["prob"] > 0.1]
+    
+
+    decision = LanguageDecision(
+        user_language=user_language,
+        confidence=confidence,
+        is_mixed=is_mixed,
+        retrieval_languages=retrieval_languages,
+        answer_language=user_language
+    )
+
+    return decision.model_dump()
 
 def build_rag_prompt(question: str, chunks: List[Document], image_context: str = "") -> str:
     """
@@ -69,7 +106,13 @@ def build_rag_prompt(question: str, chunks: List[Document], image_context: str =
     logger.debug(f"Using {len(chunks)} document chunks, image context: {'yes' if image_context else 'no'}")
 
     # ---- Language detection ----
-    language = detect_language(question)
+    # Run the tool directly
+    language_result = language_detection_tool.run(question)
+
+    language = language_result["answer_language"]
+    print("Detected language decision:", language)
+
+
 
     # ---- Language-specific system instruction ----
     if language == "fr":
@@ -104,6 +147,7 @@ def build_rag_prompt(question: str, chunks: List[Document], image_context: str =
             "Der Kontext umfasst Dokumentenauszüge und/oder Bildbeschreibungen.\n"
             "Sollte die Antwort nicht im Kontext enthalten sein, geben Sie dies deutlich an.\n"
         )
+
     elif language == "it":
         system_instruction = (
             "Sei un assistente esperto.\n"
@@ -112,6 +156,7 @@ def build_rag_prompt(question: str, chunks: List[Document], image_context: str =
             "Il contesto include estratti di documenti e/o descrizioni di immagini.\n"
             "Se la risposta non è presente nel contesto, indicalo chiaramente.\n"
         )
+
     elif language == "el":
         system_instruction = (
             "Είστε ειδικός βοηθός.\n"
@@ -120,6 +165,7 @@ def build_rag_prompt(question: str, chunks: List[Document], image_context: str =
             "Το πλαίσιο περιλαμβάνει αποσπάσματα εγγράφων ή/και περιγραφές εικόνων.\n"
             "Εάν η απάντηση δεν περιλαμβάνεται στο πλαίσιο, δηλώστε το σαφώς.\n"
         )
+
     else:
         system_instruction = (
             "You are a smart document analyzer.\n"
@@ -162,7 +208,7 @@ def build_summarize_prompt(doc):
     Returns:
         str: A formatted prompt string ready for use with a language model.
     """
-    language = detect_language(doc["content"][:2000])
+    language = detect_language_with_confidence(doc["content"][:2000])
 
     if language == "fr":
         system_instruction = (
@@ -185,6 +231,7 @@ def build_summarize_prompt(doc):
             "सार स्पष्ट, संक्षिप्त और दस्तावेज़ की जानकारी पर आधारित होना चाहिए।\n"
             "दस्तावेज़ में न होने वाली कोई जानकारी न जोड़ें।"
         )
+
     elif language == "de":
         system_instruction = (
             "Sie sind ein kompetenter Assistent.\n"
@@ -192,6 +239,7 @@ def build_summarize_prompt(doc):
             "Formulieren Sie klar, prägnant und inhaltlich getreu.\n"
             "Fügen Sie keine Informationen hinzu, die nicht im Dokument enthalten sind.\n"
         )
+
     elif language == "it":
         system_instruction = (
             "Sei un assistente esperto.\n"
@@ -199,6 +247,7 @@ def build_summarize_prompt(doc):
             "Sii chiaro, conciso e fedele al contenuto.\n"
             "Non aggiungere informazioni non presenti nel documento.\n"
         )
+
     elif language == "el":
         system_instruction = (
             "Είστε ένας έμπειρος βοηθός.\n"
@@ -206,6 +255,7 @@ def build_summarize_prompt(doc):
             "Να είστε σαφής, συνοπτικός και πιστός στο περιεχόμενο.\n"
             "Μην προσθέτετε πληροφορίες που δεν υπάρχουν στο έγγραφο.\n"
         )
+
     else:
         system_instruction = (
             "You are a smart document analyzer.\n"
@@ -241,7 +291,7 @@ def build_image_only_prompt(question: str, image_context: str) -> str:
         raise ValueError("No image context provided for image-only prompt")
     
     # ---- Language detection ----
-    language = detect_language(question)
+    language = detect_language_with_confidence(question)
     
     # ---- Language-specific system instruction ----
     if language == "fr":
@@ -276,6 +326,7 @@ def build_image_only_prompt(question: str, image_context: str) -> str:
            "Falls die Antwort nicht in den Bildbeschreibungen enthalten ist, geben Sie dies bitte deutlich an.\n"
            "Wenn Sie sich auf bestimmte Bilder beziehen, nennen Sie bitte das jeweilige Bild.\n"
         )
+
     elif language == "it":
         system_instruction = (
            "Sei un assistente qualificato che risponde a domande sulle immagini.\n"
@@ -284,6 +335,7 @@ def build_image_only_prompt(question: str, image_context: str) -> str:
             "Se la risposta non è presente nelle descrizioni delle immagini, indicalo chiaramente.\n"
             "Quando fai riferimento a immagini specifiche, indica a quale immagine ti riferisci.\n"
         )
+
     elif language == "el":
         system_instruction = (
             "Είστε ένας εξειδικευμένος βοηθός που απαντά σε ερωτήσεις σχετικά με εικόνες.\n"
@@ -292,6 +344,7 @@ def build_image_only_prompt(question: str, image_context: str) -> str:
             "Εάν η απάντηση δεν περιλαμβάνεται στις περιγραφές εικόνων, δηλώστε το με σαφήνεια.\n"
             "Όταν αναφέρεστε σε συγκεκριμένες εικόνες, υποδείξτε σε ποια εικόνα γίνεται αναφορά.\n"
         )
+
     else:
         system_instruction = (
             "You are a smart image analyzer.\n"
