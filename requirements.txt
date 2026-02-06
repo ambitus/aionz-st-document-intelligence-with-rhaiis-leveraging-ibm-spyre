@@ -26,6 +26,7 @@ beautifulsoup4
 ibm-watsonx-ai
 elasticsearch==8.13.0
 langchain
+langdetect
 #sentence-transformers
 langchain_community
 pymilvus
