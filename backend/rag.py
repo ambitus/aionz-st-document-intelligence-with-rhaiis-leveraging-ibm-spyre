@@ -9,7 +9,7 @@ from typing import List, Optional, Union, Any, Dict
 
 from langchain.schema import Document
 from utils import detect_language_with_confidence
-
+from pydantic import BaseModel
 from langchain.tools import tool
 
 # Configure logging
