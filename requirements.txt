@@ -13,13 +13,13 @@ sqlalchemy
 #llvmlite
 shap==0.47.0
 fastapi[standard]
-pypmml
+# pypmml
 sklearn_pandas
 jupyterlab
 notebook
 reportlab
 requests
-sklearn2pmml
+# sklearn2pmml
 #pdfplumber
 tqdm
 beautifulsoup4

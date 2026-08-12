@@ -64,23 +64,19 @@ ENV PDFIUM_PLATFORM=sourcebuild
 RUN /home/dev/devenv/bin/pip install pdfminer.six
 RUN /home/dev/devenv/bin/pip install --only-binary=PyMuPDF pypdf pymupdf4llm[parsers-pypdf]
 RUN /home/dev/devenv/bin/pip install pdfplumber --no-binary :all: --no-deps
-RUN /home/dev/devenv/bin/pip install "numba<0.62" "llvmlite<0.45,>=0.44.0"
+# Copy wheel files from your local directory
+WORKDIR /home/dev
+COPY numba-0.61.2-cp312-cp312-linux_s390x.whl .
+COPY llvmlite-0.44.0-cp312-cp312-linux_s390x.whl .
 
-# --- Build & Install Apache Arrow from source ---
-RUN git clone https://github.com/apache/arrow.git && \
-    cd arrow/cpp && \
-    mkdir release && cd release && \
-    cmake .. \
-      -DARROW_COMPUTE=ON \
-      -DARROW_PARQUET=ON \
-      -DARROW_PYTHON=ON \
-      -DARROW_BUILD_STATIC=OFF \
-      -DARROW_BUILD_SHARED=ON \
-      -DCMAKE_BUILD_TYPE=Release && \
-    make -j"$(nproc)" && \
-    make install && \
-    cd ../../python && \
-    /home/dev/devenv/bin/pip install -e .
+# Install the wheels
+RUN /home/dev/devenv/bin/pip install ./numba-0.61.2-cp312-cp312-linux_s390x.whl ./llvmlite-0.44.0-cp312-cp312-linux_s390x.whl
+
+# Clean up the wheel files to keep image size small
+RUN rm *.whl
+
+COPY pyarrow-22.0.0-cp312-cp312-linux_s390x.whl .
+RUN /home/dev/devenv/bin/pip install ./pyarrow-22.0.0-cp312-cp312-linux_s390x.whl
 
 COPY requirements.txt .
 RUN /home/dev/devenv/bin/pip install -r requirements.txt

@@ -15,59 +15,63 @@ services:
       - ./frontend:/home/dev/Spyre_Document_Summarizer/frontend
     working_dir: /home/dev/Spyre_Document_Summarizer
     environment:
+      # API URLs
       - REACT_APP_API_BASE_URL=http://${HOST_IP:-localhost}:8002
-      - RHAIIS_API_BASE_URL=http://${HOST_IP:-localhost}:9000
+      - RHAIIS_API_BASE_URL=http://localhost:8000
+      
+      # Database connections (using localhost because of host networking)
+      - OS_HOST=http://localhost:19200
+      - MONGO_DB_HOST=mongodb://localhost:27017/
+      
+      # Model configuration
+      - EMBEDDING_MODEL=ibm-granite/granite-embedding-278m-multilingual
+      
+      # Text processing
+      - CHUNK_SIZE=25
+      - CHUNK_OVERLAP=4
+      
+      # Frontend build
+      - DISABLE_ESLINT_PLUGIN=true
+      - HOST=0.0.0.0
+      - PORT=3002
     dns:
       - 8.8.8.8
       - 1.1.1.1
+    network_mode: "host"
+    # Map service names to localhost for backward compatibility
+    extra_hosts:
+      - "mongodb:127.0.0.1"
+      - "opensearch:127.0.0.1"
     command: >
       bash -c "
         set -e;
-
         echo 'Starting container...';
-
         source /home/dev/devenv/bin/activate || true;
-
         pip install -q sklearn2pmml sentence_transformers colorama rouge-score langdetect accelerate Pillow || true;
-
         mkdir -p /home/dev/Spyre_Document_Summarizer &&
         mkdir -p /home/dev/Spyre_Document_Summarizer/logs;
-
         touch /home/dev/Spyre_Document_Summarizer/logs/frontend.log;
         touch /home/dev/Spyre_Document_Summarizer/logs/backend.log;
-
         echo 'Listing project directory:' &&
         ls -l /home/dev/Spyre_Document_Summarizer;
-
         if [ -d /home/dev/Spyre_Document_Summarizer/frontend ]; then
           cd /home/dev/Spyre_Document_Summarizer/frontend &&
           rm -rf node_modules &&
           npm install &&
-          PORT=3002 npm start > /home/dev/Spyre_Document_Summarizer/logs/frontend.log 2>&1 &
+          DISABLE_ESLINT_PLUGIN=true HOST=0.0.0.0 PORT=3002 npm start > /home/dev/Spyre_Document_Summarizer/logs/frontend.log 2>&1 &
         else
           echo 'ERROR: frontend directory not found' > /home/dev/Spyre_Document_Summarizer/logs/frontend.log
         fi;
-
         if [ -d /home/dev/Spyre_Document_Summarizer/backend ]; then
           cd /home/dev/Spyre_Document_Summarizer/backend &&
           uvicorn server:app --host 0.0.0.0 --port 8002 --reload > /home/dev/Spyre_Document_Summarizer/logs/backend.log 2>&1 &
         else
           echo 'ERROR: backend directory not found' > /home/dev/Spyre_Document_Summarizer/logs/backend.log
         fi;
-
-        # Wait a moment for logs to be created, then tail them
         sleep 2;
         tail -f /home/dev/Spyre_Document_Summarizer/logs/frontend.log /home/dev/Spyre_Document_Summarizer/logs/backend.log
       "
     tty: true
-    ports:
-      - "3002:3002"
-      - "8002:8002"
-    networks:
-      - app-network
-    depends_on:
-      - mongodb
-      - opensearch
 
   mongodb:
     image: docker.io/s390x/mongo:4
@@ -77,10 +81,7 @@ services:
       - label=disable
     environment:
       - DISABLE_SECURITY_PLUGIN=true
-    ports:
-      - "27017:27017"
-    networks:
-      - app-network
+    network_mode: "host"
 
   opensearch:
     image: phoenixsystemsag/opensearch:2.9.0
@@ -91,16 +92,48 @@ services:
     environment:
       - discovery.type=single-node
       - DISABLE_SECURITY_PLUGIN=true
-    ports:
-      - "19200:9200"
+    network_mode: "host"
     volumes:
       - opensearch-data:/usr/share/opensearch/data
-    networks:
-      - app-network
+
+  spyre-inference:
+    image: icr.io/ai_sw_accel/dev/s390x/spyre_inference_s390x:latest-20260810
+    container_name: spyre-inference
+    security_opt:
+      - seccomp=unconfined
+      - label=disable
+    network_mode: "host"
+    devices:
+      - /dev/fuse:/dev/fuse
+      - /dev/vfio/vfio:/dev/vfio/vfio
+      - /dev/vfio/1:/dev/vfio/1
+      - /dev/vfio/2:/dev/vfio/2
+      - /dev/vfio/3:/dev/vfio/3
+      - /dev/vfio/4:/dev/vfio/4
+    group_add:
+      - keep-groups
+    shm_size: 8g
+    environment:
+      - FLEX_DEVICE=PF
+      - HF_TOKEN=
+      - LD_LIBRARY_PATH=/home/senuser/torch-spyre/.venv/lib/python3.12/site-packages/torch_spyre/lib:/usr/lib:/usr/lib64
+      - TORCH_DEVICE_BACKEND_AUTOLOAD=0
+    command: >
+      bash -c "
+        echo 'Setting up environment...';
+        source /home/senuser/torch-spyre/.venv/bin/activate;
+        export LD_LIBRARY_PATH=/home/senuser/torch-spyre/.venv/lib/python3.12/site-packages/torch_spyre/lib:/usr/lib:/usr/lib64:\$LD_LIBRARY_PATH;
+        export TORCH_DEVICE_BACKEND_AUTOLOAD=0;
+        echo 'Starting vLLM server...';
+        exec /home/senuser/torch-spyre/.venv/bin/vllm serve ibm-granite/granite-3.3-8b-instruct \
+          --max-model-len 1024 \
+          --max-num-seqs 8 \
+          --tensor-parallel-size 2 \
+          --port 8000 \
+          --host 0.0.0.0
+      "
+    tty: true
+    stdin_open: true
 
 volumes:
   opensearch-data:
-
-networks:
-  app-network:
-    driver: bridge

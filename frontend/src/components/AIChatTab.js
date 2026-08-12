@@ -195,12 +195,12 @@ const AIChat = ({ documents, currentUser }) => {
   const sendStreamingQueryToAPI = async (query, username, onChunk, onTimeout) => {
     // Create abort controller for timeout handling
     abortControllerRef.current = new AbortController();
-    const timeoutId = setTimeout(() => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        onTimeout?.();
-      }
-    }, 120000); // 2 minutes timeout
+    // const timeoutId = setTimeout(() => {
+    //   if (abortControllerRef.current) {
+    //     abortControllerRef.current.abort();
+    //     onTimeout?.();
+    //   }
+    // }, 60 * 60 * 1000); // 15 minutes timeout
 
     try {
       const formData = new FormData();

@@ -22,12 +22,15 @@ from urllib3.util.retry import Retry
 from utils import green_log
 
 # Configuration constants
-MAX_TOKENS = 10000
-MAX_PROMPT_LENGTH = 10000
+MAX_TOKENS = 512  # Reduce output tokens to leave room for input
+MAX_PROMPT_LENGTH = 512
 
 
 # Read the RHAIIS base URL from environment
 RHAIIS_API_BASE_URL = os.environ.get("RHAIIS_API_BASE_URL", "http://localhost:9000")
+
+# New: base URL for the sibling spyre-inference service in the same compose network
+SPYRE_API_BASE_URL = os.environ.get("SPYRE_API_BASE_URL", "http://localhost:8000")
 
 
 class TLSAdapter(HTTPAdapter):
@@ -113,6 +116,174 @@ class SimpleMetricsTracker:
         return metrics
 
 
+async def call_spyre_model_streaming(
+    prompt: str,
+    metrics: Dict[str, Any] = None,
+    model: str = "ibm-granite/granite-3.3-8b-instruct",
+    max_tokens: int = MAX_TOKENS,
+    temperature: float = 0,
+    top_p: float = 1.0,
+) -> AsyncGenerator[str, None]:
+    """
+    Call the Spyre-inference vLLM server with streaming (SSE) support and
+    metrics tracking. Mirrors call_rhaiis_model_streaming, but targets the
+    spyre-inference service on the compose app-network over plain HTTP.
+    """
+    import aiohttp
+
+    url = f"{SPYRE_API_BASE_URL}/v1/chat/completions"
+    headers = {"Content-Type": "application/json"}
+
+    if metrics is None:
+        metrics = SimpleMetricsTracker.start_tracking(
+            "spyre_inference", prompt_length=len(prompt)
+        )
+
+    truncated_prompt = prompt[:MAX_PROMPT_LENGTH]
+    print(f">>> Calling Spyre inference API with prompt length: {len(truncated_prompt)}")
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "user", "content": truncated_prompt}
+        ],
+        "max_tokens": min(max_tokens, MAX_TOKENS),
+        "temperature": temperature,
+        "top_p": top_p,
+        "stream": True,
+    }
+
+    first_token_received = False
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=36000)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, headers=headers, json=payload) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    print(f"Error: Spyre API returned status {response.status}: {error_text}")
+                    yield f"Error: Spyre API returned status {response.status}: {error_text}"
+                    return
+
+                print(f">>> Spyre API response status: {response.status}")
+
+                buffer = ""
+                async for chunk_bytes in response.content.iter_any():
+                    if not chunk_bytes:
+                        continue
+
+                    chunk = chunk_bytes.decode("utf-8")
+                    buffer += chunk
+
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        line = line.strip()
+
+                        if not line or not line.startswith("data:"):
+                            continue
+
+                        data_str = line[5:].strip()
+
+                        if data_str == "[DONE]":
+                            print("\n>>> [DONE]")
+                            SimpleMetricsTracker.complete_and_print(metrics)
+                            yield "[DONE]"
+                            return
+
+                        try:
+                            data_json = json.loads(data_str)
+                            delta = data_json["choices"][0]["delta"].get("content", "")
+                            if delta:
+                                if not first_token_received:
+                                    SimpleMetricsTracker.record_first_token(metrics)
+                                    first_token_received = True
+                                SimpleMetricsTracker.record_token_batch(metrics, delta)
+                                print(delta, end="", flush=True)
+                                yield delta
+                        except Exception as e:
+                            print(f"JSON error: {e} | data: {data_str}")
+
+                if buffer.strip():
+                    yield f"Error: Incomplete response data: {buffer}"
+
+    except asyncio.TimeoutError:
+        print("Error: Request timeout")
+        SimpleMetricsTracker.complete_and_print(metrics)
+        yield "Error: Request timeout"
+    except Exception as e:
+        print(f"Error in Spyre API call: {e}")
+        SimpleMetricsTracker.complete_and_print(metrics)
+        yield f"Error: {str(e)}"
+
+
+def call_spyre_model_without_streaming(
+    prompt: str,
+    model: str = "ibm-granite/granite-3.3-8b-instruct",
+    max_tokens: int = MAX_TOKENS,
+    temperature: float = 0,
+    top_p: float = 1.0,
+) -> Any:
+    """
+    Call the Spyre-inference vLLM server (OpenAI-compatible chat completions
+    API) running as a sibling container on the app-network in docker-compose.
+
+    Unlike call_rhaiis_model_without_streaming, this hits /v1/chat/completions
+    with a `messages` payload (matching the vllm serve output you tested via
+    curl), and talks to the container over plain HTTP on the internal
+    compose network - no TLS/verify=False needed since traffic never leaves
+    the bridge network.
+    """
+    print(">>> Preparing Spyre inference API call...")
+    url = f"{SPYRE_API_BASE_URL}/v1/chat/completions"
+    headers = {"Content-Type": "application/json"}
+
+    truncated_prompt = prompt[:MAX_PROMPT_LENGTH]
+    print(f">>> Prompt truncated to {len(truncated_prompt)} characters")
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "user", "content": truncated_prompt}
+        ],
+        "max_tokens": min(max_tokens, MAX_TOKENS),
+        "temperature": temperature,
+        "top_p": top_p,
+        "stream": False,
+    }
+    print(f">>> Payload prepared: max_tokens={payload['max_tokens']}, "
+          f"temperature={temperature}, top_p={top_p}")
+
+    print(">>> Setting up HTTP session with retries...")
+    session = requests.Session()
+    retries = Retry(
+        total=5,
+        backoff_factor=1,
+        status_forcelist=[500, 502, 503, 504],
+    )
+    session.mount("http://", HTTPAdapter(max_retries=retries))
+
+    green_log(">>> Sending request to Spyre inference server...")
+    start = time.time()
+    try:
+        response = session.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=36000,
+        )
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        print(f"Error calling Spyre inference API: {e}")
+        raise
+    end = time.time()
+    green_log(f">>> Time taken for API call: {end - start:.2f}s")
+
+    result = response.json()
+    content = result["choices"][0]["message"]["content"]
+    print(f">>> Response from Spyre: {content}")
+    return result
+
+
 def call_rhaiis_model_without_streaming(
     prompt: str,
     model: str = "ibm-granite/granite-3.3-8b-instruct",
@@ -166,7 +337,7 @@ def call_rhaiis_model_without_streaming(
             headers=headers,
             json=payload,
             verify=False,
-            timeout=300
+            timeout=36000
         )
         print(">>> Request sent, waiting for response...")
         response.raise_for_status()
@@ -236,7 +407,7 @@ def call_rhaiis_model(
             headers=headers,
             json=payload,
             verify=False,
-            timeout=300,
+            timeout=36000,
             stream=stream,
         )
         response.raise_for_status()
@@ -319,7 +490,7 @@ async def call_rhaiis_model_streaming(prompt: str, metrics: Dict[str, Any] = Non
     first_token_received = False
 
     try:
-        timeout = aiohttp.ClientTimeout(total=300)
+        timeout = aiohttp.ClientTimeout(total=36000)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(
                 url,

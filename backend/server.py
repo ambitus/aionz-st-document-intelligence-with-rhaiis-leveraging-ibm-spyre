@@ -39,6 +39,7 @@ from opensearch_utils import (
 )
 from rag import build_rag_prompt, build_summarize_prompt
 from rhaiis_utils import call_rhaiis_model_streaming
+from rhaiis_utils import call_spyre_model_streaming
 from utils import extract_text_from_doc, extract_text_from_pdf
 
 # Configure logging
@@ -702,7 +703,9 @@ async def stream_and_process_files(
             prompt = build_summarize_prompt(doc)
 
             # Call RHAIIS with metrics
-            summary_stream = call_rhaiis_model_streaming(prompt, file_metrics)
+            # summary_stream = call_rhaiis_model_streaming(prompt, file_metrics)
+            # Call Spyre Inference with metrics
+            summary_stream = call_spyre_model_streaming(prompt, file_metrics)
 
             # Collect summary chunks
             summary_chunks = []
@@ -941,7 +944,10 @@ async def stream_rhaiis_response(prompt: str, overall_metrics: Dict[str, Any]) -
 
     try:
         # Call RHAIIS with metrics
-        response_stream = call_rhaiis_model_streaming(prompt, inference_metrics)
+        # response_stream = call_rhaiis_model_streaming(prompt, inference_metrics)
+
+        # Call Spyre inference with metrics
+        response_stream = call_spyre_model_streaming(prompt, inference_metrics)
 
         async for chunk in response_stream:
             if chunk == "[DONE]":
